@@ -751,3 +751,72 @@ button:disabled {
     height: 92dvh;
   }
 }
+
+.wrong-answer-item {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #e5e8df;
+  background: transparent;
+  padding: 12px 0;
+  text-align: left;
+  font: inherit;
+  color: #4f5c4c;
+  cursor: pointer;
+}
+
+.wrong-answer-item:hover {
+  color: #1f2a1d;
+  background: rgba(90, 120, 80, 0.06);
+}
+
+.wrong-answer-item:last-child {
+  border-bottom: 0;
+}
+
+#wrongAnswerCard {
+  display: block;
+  overflow: visible;
+}
+
+#wrongAnswerCard.has-wrong-answers {
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#wrongAnswerTitle {
+  flex: 0 0 auto;
+}
+
+#wrongAnswerList {
+  overflow: visible;
+  padding-right: 0;
+}
+
+#wrongAnswerCard.has-wrong-answers #wrongAnswerList {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+#wrongAnswerCard.has-wrong-answers #wrongAnswerList::-webkit-scrollbar {
+  width: 6px;
+}
+
+#wrongAnswerCard.has-wrong-answers #wrongAnswerList::-webkit-scrollbar-thumb {
+  background: #b8c2ae;
+  border-radius: 999px;
+}
+
+#wrongAnswerCard.has-wrong-answers #wrongAnswerList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.empty-wrong-answer {
+  padding: 10px 0;
+  border-bottom: 0;
+  font-size: 14px;
+  color: #8a9485;
+}

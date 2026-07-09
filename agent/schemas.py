@@ -92,3 +92,33 @@ class StudyRAGState(TypedDict, total=False):
     answer: str
     evidence: list[str]
     trace: list[str]
+
+
+class QuizQuestion(BaseModel):
+    id: str | None = None
+    question: str
+    choices: list[str] = Field(default_factory=list)
+    answer: str
+    explanation: str
+    page: int | None = None
+    pdf_name: str | None = None
+
+
+class QuizSet(BaseModel):
+    questions: list[QuizQuestion]
+
+
+class QuizStartRequest(BaseModel):
+    session_id: str = "default"
+    topic: str = "전체"
+    count: int = 5
+
+
+class QuizAnswerRequest(BaseModel):
+    session_id: str = "default"
+    answer: str
+
+
+class QuizWrongDetailRequest(BaseModel):
+    session_id: str = "default"
+    wrong_id: str

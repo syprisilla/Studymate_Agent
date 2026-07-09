@@ -111,15 +111,10 @@
           </ul>
         </div>
 
-        <div class="card">
-          <h2>자연어 예시</h2>
-          <div class="examples">
-            <div>현재 PDF 요약해줘</div>
-            <div>이 PDF에서 중요한 개념 뭐야?</div>
-            <div>userdel 명령어 설명해줘</div>
-            <div>예상문제 5개 만들어줘</div>
-            <div>방금 문제 내 답 맞아?</div>
-            <div>이거 말고 더 알아야 할 거 있어?</div>
+        <div class="card" id="wrongAnswerCard">
+          <h2 id="wrongAnswerTitle">오답 부분</h2>
+          <div class="examples" id="wrongAnswerList">
+            <div class="empty-wrong-answer">아직 틀린 문제가 없습니다.</div>
           </div>
         </div>
       </aside>
@@ -149,6 +144,7 @@
       localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
 
       let currentPdfName = "PDF";
+      let quizActive = false;
 
       const messagesEl = document.getElementById("messages");
       const messageInput = document.getElementById("messageInput");
@@ -163,6 +159,9 @@
       const traceInfo = document.getElementById("traceInfo");
       const newChatBtn = document.getElementById("newChatBtn");
       const chatList = document.getElementById("chatList");
+      const wrongAnswerTitle = document.getElementById("wrongAnswerTitle");
+      const wrongAnswerList = document.getElementById("wrongAnswerList");
+      const wrongAnswerCard = document.getElementById("wrongAnswerCard");
 
       function getNowText() {
         return new Date().toISOString();
@@ -377,6 +376,30 @@
         return normalizeArray(data.trace || data.traces || data.logs);
       }
 
+      function isQuizStartMessage(message) {
+        const text = String(message || "").toLowerCase();
+
+        return (
+          text.includes("예상문제") ||
+          text.includes("문제 내") ||
+          text.includes("문제내") ||
+          text.includes("퀴즈") ||
+          text.includes("시험문제")
+        );
+      }
+
+      function extractQuizCount(message) {
+        const match = String(message || "").match(/(\d+)\s*개/);
+
+        if (!match) return 5;
+
+        const count = Number(match[1]);
+
+        if (!Number.isFinite(count)) return 5;
+
+        return Math.max(1, Math.min(count, 10));
+      }
+
       function renderAiMessage(container, text) {
         const lines = String(text || "").split("\n");
 
@@ -496,6 +519,94 @@
         });
       }
 
+      function renderEmptyWrongAnswers() {
+        if (!wrongAnswerTitle || !wrongAnswerList) return;
+
+        if (wrongAnswerCard) {
+          wrongAnswerCard.classList.remove("has-wrong-answers");
+        }
+
+        wrongAnswerTitle.textContent = "오답 부분";
+        wrongAnswerList.innerHTML = "";
+
+        const div = document.createElement("div");
+        div.className = "empty-wrong-answer";
+        div.textContent = "아직 틀린 문제가 없습니다.";
+        wrongAnswerList.appendChild(div);
+      }
+
+      function renderWrongAnswers(items) {
+        if (!wrongAnswerTitle || !wrongAnswerList) return;
+
+        const wrongs = Array.isArray(items) ? items : [];
+
+        if (wrongs.length === 0) {
+          renderEmptyWrongAnswers();
+          return;
+        }
+
+        if (wrongAnswerCard) {
+          wrongAnswerCard.classList.add("has-wrong-answers");
+        }
+
+        wrongAnswerTitle.textContent = "오답 부분";
+        wrongAnswerList.innerHTML = "";
+
+        wrongs.forEach((item) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "wrong-answer-item";
+
+          const questionText = String(item.question || "오답 문제")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          button.textContent = `${item.number || "-"}번. ${
+            questionText.length > 35
+              ? questionText.slice(0, 35) + "..."
+              : questionText
+          }`;
+
+          button.addEventListener("click", () => {
+            openWrongAnswer(item.id);
+          });
+
+          wrongAnswerList.appendChild(button);
+        });
+      }
+
+      async function refreshWrongAnswers() {
+        try {
+          const data = await fetchJson(
+            `/api/quiz/wrongs?session_id=${encodeURIComponent(sessionId)}`,
+          );
+
+          renderWrongAnswers(data.wrong_answers || []);
+        } catch (err) {
+          renderEmptyWrongAnswers();
+        }
+      }
+
+      async function openWrongAnswer(wrongId) {
+        try {
+          const data = await fetchJson(
+            `/api/quiz/wrongs/${encodeURIComponent(
+              wrongId,
+            )}?session_id=${encodeURIComponent(sessionId)}`,
+          );
+
+          addMessage("ai", data.answer, { save: false });
+
+          const wrong = data.wrong;
+
+          if (wrong && wrong.page) {
+            openPdfPage(wrong.page, wrong.pdf_name || currentPdfName);
+          }
+        } catch (err) {
+          addMessage("ai", `오답 기록을 불러오지 못했습니다: ${err.message}`);
+        }
+      }
+
       function updateAgentPanel(data) {
         if (!data || typeof data !== "object") {
           resetSideInfo();
@@ -531,11 +642,13 @@
       function clearChatScreen() {
         renderWelcomeMessage();
 
+        quizActive = false;
         currentPdfName = "PDF";
         if (uploadFileName) uploadFileName.textContent = "파일 선택";
         if (uploadBox) uploadBox.classList.remove("has-file");
         pdfStatus.textContent = "PDF 없음";
         resetSideInfo();
+        renderEmptyWrongAnswers();
       }
 
       function setActiveChatItem(id) {
@@ -622,6 +735,7 @@
 
       async function loadChatSession(id) {
         sessionId = id;
+        quizActive = false;
         localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
 
         setActiveChatItem(sessionId);
@@ -675,6 +789,7 @@
           }
 
           await refreshPdfStatus();
+          await refreshWrongAnswers();
           scrollToBottom();
           return;
         } catch (err) {
@@ -707,6 +822,7 @@
 
         applyLocalPdfStatus(sessionId);
         await refreshPdfStatus();
+        await refreshWrongAnswers();
         scrollToBottom();
       }
 
@@ -724,6 +840,7 @@
         }
 
         sessionId = newSessionId || crypto.randomUUID();
+        quizActive = false;
         localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
 
         pdfInput.value = "";
@@ -743,7 +860,8 @@
         setActiveChatItem(sessionId);
 
         messageInput.focus();
-        refreshPdfStatus();
+        await refreshPdfStatus();
+        await refreshWrongAnswers();
       }
 
       async function refreshPdfStatus() {
@@ -830,22 +948,91 @@
 
           const data = await res.json();
           currentPdfName = data.pdf_name || file.name || "PDF";
+          quizActive = false;
+
           if (uploadFileName) uploadFileName.textContent = currentPdfName;
           if (uploadBox) uploadBox.classList.add("has-file");
 
           updateLocalSessionPdfName(currentPdfName);
           pdfStatus.textContent = `업로드됨: ${currentPdfName}\n세션에 연결된 PDF`;
           resetSideInfo();
+          renderEmptyWrongAnswers();
 
           addMessage("ai", `PDF 업로드 완료: ${data.pdf_name}`);
 
           await refreshPdfStatus();
+          await refreshWrongAnswers();
           await loadChatSessions();
           setActiveChatItem(sessionId);
         } catch (err) {
           addMessage("ai", `PDF 업로드 실패: ${err.message}`);
           await refreshPdfStatus();
         }
+      }
+
+      async function startQuizFromMessage(message) {
+        const count = extractQuizCount(message);
+
+        const data = await fetchJson("/api/quiz/start", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            topic: message,
+            count,
+          }),
+        });
+
+        quizActive = true;
+
+        addMessage("ai", data.answer, {
+          extra: {
+            route: data.route,
+            used_tools: data.used_tools || [],
+            evidence: data.evidence || [],
+            trace: data.trace || [],
+          },
+        });
+
+        updateAgentPanel(data);
+        await refreshWrongAnswers();
+        await refreshPdfStatus();
+        await loadChatSessions();
+        setActiveChatItem(sessionId);
+      }
+
+      async function submitQuizAnswer(message) {
+        const data = await fetchJson("/api/quiz/answer", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            answer: message,
+          }),
+        });
+
+        if (data.finished || data.ok === false) {
+          quizActive = false;
+        }
+
+        addMessage("ai", data.answer, {
+          extra: {
+            route: data.route,
+            used_tools: data.used_tools || [],
+            evidence: data.evidence || [],
+            trace: data.trace || [],
+          },
+        });
+
+        updateAgentPanel(data);
+        renderWrongAnswers(data.wrong_answers || []);
+        await refreshPdfStatus();
+        await loadChatSessions();
+        setActiveChatItem(sessionId);
       }
 
       async function sendMessage() {
@@ -863,6 +1050,16 @@
         sendBtn.disabled = true;
 
         try {
+          if (quizActive) {
+            await submitQuizAnswer(message);
+            return;
+          }
+
+          if (isQuizStartMessage(message)) {
+            await startQuizFromMessage(message);
+            return;
+          }
+
           const res = await fetch("/api/chat", {
             method: "POST",
             headers: {
@@ -893,6 +1090,7 @@
           updateAgentPanel(data);
 
           await refreshPdfStatus();
+          await refreshWrongAnswers();
           await loadChatSessions();
           setActiveChatItem(sessionId);
         } catch (err) {
@@ -971,6 +1169,7 @@
       loadChatSessions();
       loadChatSession(sessionId);
       refreshPdfStatus();
+      refreshWrongAnswers();
       scrollToBottom();
     </script>
   </body>
