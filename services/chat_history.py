@@ -55,15 +55,19 @@ def make_title_from_message(message: str) -> str:
     return text
 
 
-def create_chat_session(title: str | None = None) -> dict[str, Any]:
+def create_chat_session(
+    session_id: str | None = None,
+    title: str | None = None,
+    pdf_name: str | None = None,
+) -> dict[str, Any]:
     data = load_history()
-    session_id = uuid.uuid4().hex
+    session_id = session_id or uuid.uuid4().hex
     created_at = now_text()
 
     data["sessions"][session_id] = {
         "session_id": session_id,
         "title": title or "새 대화",
-        "pdf_name": None,
+        "pdf_name": pdf_name,
         "created_at": created_at,
         "updated_at": created_at,
         "messages": [],
