@@ -4,11 +4,9 @@ PDF 강의자료를 업로드하면 해당 문서를 기반으로 개념 설명,
 
 사용자는 웹 채팅창에 자연어로 질문하고, Agent는 요청 의도를 `concept`, `summary`, `plan`, `quiz`, `review`, `followup`, `web_search`, `hybrid` 등으로 분류한 뒤 필요한 RAG 검색 또는 Tool을 실행합니다. Web UI에서는 PDF 업로드, 대화 기록, 사용 Tool, 참고 페이지, 실행 Trace, 오답 목록을 함께 확인할 수 있습니다.
 
-## 문제 정의
+## 기획 의도
 
-강의자료 PDF를 공부할 때 학생은 필요한 개념을 직접 찾아 읽고, 시험에 나올 만한 부분을 정리하고, 문제를 만들어 풀어보는 과정을 반복해야 합니다. 자료의 페이지 수가 많거나 여러 개념이 섞여 있는 경우에는 원하는 내용을 찾는 데 시간이 오래 걸리고, 자신이 이해한 답이 맞는지 확인하기도 어렵습니다.
-
-따라서 본 프로그램은 업로드된 PDF를 세션 단위로 저장하고, 문서 검색 결과를 바탕으로 학습 질문에 답하며, 예상문제와 오답 복습까지 연결되는 개인 학습 보조 Agent를 구현하고자 합니다.
+시험공부를 할 때 GPT에게 PDF 기반 개념 설명이나 예상문제 생성을 요청하는 경우가 많지만, 대화가 길어지면 PDF 내용을 다시 업로드해야 하거나 이전에 틀린 문제를 찾기 위해 채팅 기록을 직접 뒤져야 하는 불편함이 있었습니다. 이러한 문제를 해결하고자 StudyMate Agent를 제작하게 되었습니다.
 
 ## 주요 기능
 
@@ -44,7 +42,7 @@ PDF 내용이랑 웹 자료를 같이 참고해서 설명해줘
 내 답이 맞는지 채점해줘
 ```
 
-## 실행 흐름
+## LangGraph workflow
 
 ```mermaid
 flowchart TD
@@ -120,8 +118,6 @@ flowchart TD
     page_image --> pdf_files
 ```
 
-서버 실행 후 LangGraph 다이어그램은 다음 주소에서도 확인할 수 있습니다.
-
 ```text
 http://127.0.0.1:8000/api/graph/mermaid
 ```
@@ -138,12 +134,6 @@ Windows PowerShell:
 
 ```bash
 venv\Scripts\activate
-```
-
-macOS/Linux:
-
-```bash
-source venv/bin/activate
 ```
 
 ### 2. 패키지 설치
@@ -165,20 +155,12 @@ pip install -r requirements.txt
 - `pymupdf`
 - `tavily-python`
 
-> `search_web_with_tavily` Tool을 사용하려면 Tavily 패키지가 필요합니다. 환경에 따라 `pip install tavily-python`을 추가로 실행해야 할 수 있습니다.
-
 ### 3. 환경변수 설정
 
 `.env.example`을 복사해 `.env`를 만듭니다.
 
 ```bash
 copy .env.example .env
-```
-
-macOS/Linux:
-
-```bash
-cp .env.example .env
 ```
 
 `.env` 예시:
@@ -539,22 +521,6 @@ studymate_ready/
 └── README.md
 ```
 
-## 구현 체크리스트
-
-- FastAPI 서버 및 정적 Web UI 구성
-- PDF 업로드/상태 확인/페이지 이미지 렌더링 구현
-- 세션별 PDF 메타데이터 저장 및 복원
-- 대화 세션 목록과 메시지 저장 구현
-- LangGraph 기반 요청 라우팅 구현
-- PDF 개념 설명/요약용 Study RAG Graph 구현
-- FAISS VectorStore와 키워드 fallback 검색 구현
-- LLM 기반 관련성 평가 및 검색어 재작성 구현
-- Tool Agent와 PDF/웹 검색 Tool 연결
-- 예상문제 생성 및 답안 제출 API 구현
-- 오답 목록/상세 복습 기능 구현
-- Agent 판단 패널에 route/tool/evidence/trace 표시
-- README 최신화
-
 ## 한계 및 개선 방향
 
 ### 한계
@@ -572,12 +538,3 @@ studymate_ready/
 - 사용자 로그인과 DB 기반 세션 저장을 도입하면 여러 사용자의 학습 기록을 안정적으로 분리할 수 있습니다.
 - 퀴즈 유형, 난이도, 범위를 UI에서 직접 조절할 수 있도록 확장할 수 있습니다.
 - PDF 여러 개를 한 세션에 연결하고 문서별 출처를 비교하는 Hybrid RAG 기능을 추가할 수 있습니다.
-
-## 참고
-
-- FastAPI
-- LangChain / LangGraph
-- OpenAI Embeddings
-- FAISS
-- pypdf / PyMuPDF
-- Tavily Search
