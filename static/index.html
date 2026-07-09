@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StudyMate Agent</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-logo">S</div>
+          <div>
+            <div class="brand-title">StudyMate</div>
+            <div class="brand-subtitle">Agent</div>
+          </div>
+        </div>
+
+        <button id="newChatBtn" type="button">＋ 새 대화</button>
+
+        <div class="chat-section-head">
+          <span>최근 대화</span>
+          <span class="chat-menu-icon">☷</span>
+        </div>
+
+        <div id="chatList"></div>
+
+        <div class="sidebar-user">
+          <div class="user-avatar">U</div>
+          <div class="user-name">사용자</div>
+          <div class="user-toggle">⌄</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="header">
+          <h1>StudyMate Agent</h1>
+          <p>
+            버튼으로 기능을 고르지 않습니다. PDF를 업로드한 뒤 자연어로 질문하면
+            Agent가 route와 Tool을 선택합니다.
+          </p>
+          <div class="header-actions">
+            <button
+              class="quick-chip"
+              type="button"
+              onclick="
+                messageInput.value = '현재 PDF 설명해줘';
+                messageInput.focus();
+              "
+            >
+              📄 pdf 설명
+            </button>
+          </div>
+        </div>
+
+        <div id="messages" class="messages">
+          <div class="message ai">
+            안녕하세요. 오른쪽에서 PDF를 업로드한 뒤 자연어로 질문하세요. 예시:
+            - 현재 PDF 요약해줘 - 이 PDF에서 중요한 개념이 뭐야? - 예상문제 5개
+            만들어줘 - 방금 문제 2번 답은 UID야. 맞아? - 이거 말고 더 알아야 할
+            거 있어?
+          </div>
+        </div>
+
+        <div class="input-area">
+          <textarea
+            id="messageInput"
+            placeholder="자연어로 질문해보세요..."
+          ></textarea>
+          <button id="sendBtn" type="button">전송</button>
+        </div>
+      </main>
+
+      <aside class="side">
+        <div class="card">
+          <h2>PDF 업로드</h2>
+          <label id="uploadBox" class="upload-box" for="pdfInput">
+            <span class="upload-icon">▧</span>
+            <span class="upload-text" id="uploadFileName">파일 선택</span>
+            <span class="upload-check">✓</span>
+            <input id="pdfInput" type="file" accept="application/pdf" />
+          </label>
+        </div>
+
+        <div class="card">
+          <h2>PDF 상태</h2>
+          <div class="status-lines">
+            <div id="pdfStatus" class="small">PDF 없음</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>AGENT 판단</h2>
+          <div class="agent-field">
+            <div class="agent-label">Route</div>
+            <div id="routeInfo" class="small">-</div>
+          </div>
+          <div class="agent-field">
+            <div class="agent-label">사용 Tool</div>
+            <div id="toolsInfo" class="small">-</div>
+          </div>
+          <div class="agent-field">
+            <div class="agent-label">RAG 근거</div>
+            <div id="evidenceInfo" class="small">-</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>AGENT TRACE</h2>
+          <ul id="traceInfo" class="trace-list">
+            <li>아직 실행 기록이 없습니다.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h2>자연어 예시</h2>
+          <div class="examples">
+            <div>현재 PDF 요약해줘</div>
+            <div>이 PDF에서 중요한 개념 뭐야?</div>
+            <div>userdel 명령어 설명해줘</div>
+            <div>예상문제 5개 만들어줘</div>
+            <div>방금 문제 내 답 맞아?</div>
+            <div>이거 말고 더 알아야 할 거 있어?</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div id="pdfModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <strong id="pdfModalTitle">PDF 페이지</strong>
+          <button class="modal-close" type="button" onclick="closePdfModal()">
+            닫기
+          </button>
+        </div>
+        <div class="modal-body">
+          <img id="pdfPageImage" alt="PDF page image" />
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const STORAGE_KEY = "studymate_chat_sessions";
+      const ACTIVE_SESSION_KEY = "studymate_session_id";
+
+      let sessionId =
+        localStorage.getItem(ACTIVE_SESSION_KEY) || crypto.randomUUID();
+
+      localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+
+      let currentPdfName = "PDF";
+
+      const messagesEl = document.getElementById("messages");
+      const messageInput = document.getElementById("messageInput");
+      const sendBtn = document.getElementById("sendBtn");
+      const pdfInput = document.getElementById("pdfInput");
+      const uploadBox = document.getElementById("uploadBox");
+      const uploadFileName = document.getElementById("uploadFileName");
+      const pdfStatus = document.getElementById("pdfStatus");
+      const routeInfo = document.getElementById("routeInfo");
+      const toolsInfo = document.getElementById("toolsInfo");
+      const evidenceInfo = document.getElementById("evidenceInfo");
+      const traceInfo = document.getElementById("traceInfo");
+      const newChatBtn = document.getElementById("newChatBtn");
+      const chatList = document.getElementById("chatList");
+
+      function getNowText() {
+        return new Date().toISOString();
+      }
+
+      function loadLocalSessions() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          const sessions = raw ? JSON.parse(raw) : [];
+
+          if (!Array.isArray(sessions)) return [];
+
+          return sessions;
+        } catch (err) {
+          return [];
+        }
+      }
+
+      function saveLocalSessions(sessions) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+      }
+
+      function makeChatTitle(text) {
+        const title = String(text || "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        if (!title) return "새 대화";
+
+        return title.length > 18 ? title.slice(0, 18) + "..." : title;
+      }
+
+      function findLocalSession(id) {
+        return loadLocalSessions().find((session) => session.session_id === id);
+      }
+
+      function upsertLocalSession(id, patch = {}) {
+        const sessions = loadLocalSessions();
+        const index = sessions.findIndex(
+          (session) => session.session_id === id,
+        );
+
+        if (index >= 0) {
+          sessions[index] = {
+            ...sessions[index],
+            ...patch,
+            updated_at: getNowText(),
+          };
+        } else {
+          sessions.unshift({
+            session_id: id,
+            title: patch.title || "새 대화",
+            pdf_name: patch.pdf_name || null,
+            messages: patch.messages || [],
+            created_at: getNowText(),
+            updated_at: getNowText(),
+          });
+        }
+
+        saveLocalSessions(sessions);
+      }
+
+      function appendLocalMessage(role, content, extra = {}) {
+        const sessions = loadLocalSessions();
+        let session = sessions.find((item) => item.session_id === sessionId);
+
+        if (!session) {
+          session = {
+            session_id: sessionId,
+            title: "새 대화",
+            pdf_name: null,
+            messages: [],
+            created_at: getNowText(),
+            updated_at: getNowText(),
+          };
+          sessions.unshift(session);
+        }
+
+        session.messages = session.messages || [];
+        session.messages.push({
+          role,
+          content,
+          ...extra,
+          created_at: getNowText(),
+        });
+
+        if (
+          role === "user" &&
+          (!session.title || session.title === "새 대화")
+        ) {
+          session.title = makeChatTitle(content);
+        }
+
+        session.updated_at = getNowText();
+
+        saveLocalSessions(sessions);
+      }
+
+      function updateLocalSessionTitle(title) {
+        upsertLocalSession(sessionId, {
+          title: makeChatTitle(title),
+        });
+      }
+
+      function updateLocalSessionPdfName(pdfName) {
+        upsertLocalSession(sessionId, {
+          pdf_name: pdfName,
+          title: findLocalSession(sessionId)?.title || makeChatTitle(pdfName),
+        });
+      }
+
+      function getLocalSessionPdfName(id = sessionId) {
+        const session = findLocalSession(id);
+        return session?.pdf_name || null;
+      }
+
+      function applyLocalPdfStatus(id = sessionId) {
+        const pdfName = getLocalSessionPdfName(id);
+
+        if (!pdfName) return false;
+
+        currentPdfName = pdfName;
+
+        if (uploadFileName) uploadFileName.textContent = pdfName;
+        if (uploadBox) uploadBox.classList.add("has-file");
+
+        pdfStatus.textContent =
+          `업로드됨: ${pdfName}\n` +
+          `세션 기록에 저장됨\n` +
+          `서버 상태 확인 중...`;
+
+        return true;
+      }
+
+      async function fetchJson(url, options = {}) {
+        const res = await fetch(url, options);
+
+        if (!res.ok) {
+          const contentType = res.headers.get("content-type") || "";
+
+          if (contentType.includes("application/json")) {
+            const error = await res.json();
+            throw new Error(error.detail || error.message || "요청 실패");
+          }
+
+          throw new Error("요청 실패");
+        }
+
+        return await res.json();
+      }
+
+      function scrollToBottom() {
+        requestAnimationFrame(() => {
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        });
+      }
+
+      function normalizeArray(value) {
+        if (Array.isArray(value)) {
+          return value
+            .map((item) => String(item || "").trim())
+            .filter((item) => item.length > 0);
+        }
+
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+
+          if (!trimmed || trimmed === "-") return [];
+
+          return trimmed
+            .split(",")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0);
+        }
+
+        return [];
+      }
+
+      function normalizeRoute(data) {
+        if (!data || typeof data !== "object") return "-";
+
+        return (
+          data.route ||
+          data.intent ||
+          data.type ||
+          data.final_response?.type ||
+          "-"
+        );
+      }
+
+      function normalizeTools(data) {
+        if (!data || typeof data !== "object") return [];
+
+        return normalizeArray(
+          data.used_tools ||
+            data.tools ||
+            data.tool_names ||
+            data.final_response?.used_tools,
+        );
+      }
+
+      function normalizeEvidence(data) {
+        if (!data || typeof data !== "object") return [];
+
+        return normalizeArray(
+          data.evidence ||
+            data.sources ||
+            data.rag_evidence ||
+            data.final_response?.evidence,
+        );
+      }
+
+      function normalizeTrace(data) {
+        if (!data || typeof data !== "object") return [];
+
+        return normalizeArray(data.trace || data.traces || data.logs);
+      }
+
+      function renderAiMessage(container, text) {
+        const lines = String(text || "").split("\n");
+
+        lines.forEach((line, index) => {
+          const match = line.match(/^- page (\d+) - (.+)$/);
+
+          if (match) {
+            const page = Number(match[1]);
+            const filename = match[2];
+
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "pdf-page-link";
+            button.textContent = `page ${page} - ${filename}`;
+            button.addEventListener("click", () => openPdfPage(page, filename));
+            container.appendChild(button);
+          } else {
+            container.appendChild(document.createTextNode(line));
+          }
+
+          if (index < lines.length - 1) {
+            container.appendChild(document.createElement("br"));
+          }
+        });
+      }
+
+      function addMessage(role, text, options = {}) {
+        const div = document.createElement("div");
+        div.className = `message ${role}`;
+
+        if (role === "ai") {
+          renderAiMessage(div, text);
+        } else {
+          div.textContent = text;
+        }
+
+        messagesEl.appendChild(div);
+
+        if (options.save !== false && (role === "user" || role === "ai")) {
+          appendLocalMessage(role, text, options.extra || {});
+        }
+
+        scrollToBottom();
+      }
+
+      function setPills(el, items) {
+        if (!el) return;
+
+        const normalizedItems = normalizeArray(items);
+
+        el.innerHTML = "";
+
+        if (normalizedItems.length === 0) {
+          el.textContent = "-";
+          return;
+        }
+
+        normalizedItems.forEach((item) => {
+          const span = document.createElement("span");
+          span.className = "pill";
+          span.textContent = item;
+          el.appendChild(span);
+        });
+      }
+
+      function setEvidence(el, items) {
+        if (!el) return;
+
+        const normalizedItems = normalizeArray(items);
+
+        el.innerHTML = "";
+
+        if (normalizedItems.length === 0) {
+          el.textContent = "-";
+          return;
+        }
+
+        normalizedItems.forEach((item) => {
+          const match = String(item).match(/page\s+(\d+)/i);
+
+          if (match) {
+            const page = Number(match[1]);
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "pdf-page-link";
+            button.textContent = item;
+            button.addEventListener("click", () =>
+              openPdfPage(page, currentPdfName),
+            );
+            el.appendChild(button);
+          } else {
+            const span = document.createElement("span");
+            span.className = "pill";
+            span.textContent = item;
+            el.appendChild(span);
+          }
+        });
+      }
+
+      function setTrace(items) {
+        if (!traceInfo) return;
+
+        const normalizedItems = normalizeArray(items);
+
+        traceInfo.innerHTML = "";
+
+        if (normalizedItems.length === 0) {
+          const li = document.createElement("li");
+          li.textContent = "실행 기록 없음";
+          traceInfo.appendChild(li);
+          return;
+        }
+
+        normalizedItems.forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = item;
+          traceInfo.appendChild(li);
+        });
+      }
+
+      function updateAgentPanel(data) {
+        if (!data || typeof data !== "object") {
+          resetSideInfo();
+          return;
+        }
+
+        if (routeInfo) {
+          routeInfo.textContent = normalizeRoute(data);
+        }
+
+        setPills(toolsInfo, normalizeTools(data));
+        setEvidence(evidenceInfo, normalizeEvidence(data));
+        setTrace(normalizeTrace(data));
+      }
+
+      function resetSideInfo() {
+        if (routeInfo) routeInfo.textContent = "-";
+        if (toolsInfo) toolsInfo.textContent = "-";
+        if (evidenceInfo) evidenceInfo.textContent = "-";
+        setTrace([]);
+      }
+
+      function renderWelcomeMessage() {
+        messagesEl.innerHTML = "";
+
+        addMessage(
+          "ai",
+          "안녕하세요. 오른쪽에서 PDF를 업로드한 뒤 자연어로 질문하세요. 예시:\n- 현재 PDF 요약해줘\n- 이 PDF에서 중요한 개념이 뭐야?\n- 예상문제 5개 만들어줘\n- 방금 문제 2번 답은 UID야. 맞아?",
+          { save: false },
+        );
+      }
+
+      function clearChatScreen() {
+        renderWelcomeMessage();
+
+        currentPdfName = "PDF";
+        if (uploadFileName) uploadFileName.textContent = "파일 선택";
+        if (uploadBox) uploadBox.classList.remove("has-file");
+        pdfStatus.textContent = "PDF 없음";
+        resetSideInfo();
+      }
+
+      function setActiveChatItem(id) {
+        document.querySelectorAll(".chat-item").forEach((el) => {
+          el.classList.toggle("active", el.dataset.sessionId === id);
+        });
+      }
+
+      function updateCurrentChatTitle(title) {
+        const activeItem = document.querySelector(
+          `.chat-item[data-session-id="${sessionId}"]`,
+        );
+
+        if (activeItem) {
+          activeItem.textContent = makeChatTitle(title);
+        }
+
+        updateLocalSessionTitle(title);
+      }
+
+      function createLocalChatItem(id, title = "새 대화") {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "chat-item";
+        item.dataset.sessionId = id;
+        item.textContent = makeChatTitle(title);
+
+        item.addEventListener("click", () => {
+          loadChatSession(id);
+        });
+
+        chatList.prepend(item);
+        setActiveChatItem(id);
+      }
+
+      function renderChatList(sessions) {
+        chatList.innerHTML = "";
+
+        if (!sessions || sessions.length === 0) {
+          createLocalChatItem(sessionId, "새 대화");
+          upsertLocalSession(sessionId, {
+            title: "새 대화",
+            messages: [],
+          });
+          return;
+        }
+
+        sessions.forEach((chat) => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "chat-item";
+          item.dataset.sessionId = chat.session_id;
+          item.textContent = makeChatTitle(
+            chat.title || chat.pdf_name || "새 대화",
+          );
+
+          item.addEventListener("click", () => {
+            loadChatSession(chat.session_id);
+          });
+
+          chatList.appendChild(item);
+        });
+
+        setActiveChatItem(sessionId);
+      }
+
+      async function loadChatSessions() {
+        const localSessions = loadLocalSessions();
+
+        try {
+          const data = await fetchJson("/api/chat/sessions");
+          const serverSessions = data.sessions || [];
+
+          if (serverSessions.length > 0) {
+            renderChatList(serverSessions);
+            return;
+          }
+        } catch (err) {
+          // 서버에 세션 목록 API가 아직 없어도 localStorage로 동작하게 둔다.
+        }
+
+        renderChatList(localSessions);
+      }
+
+      async function loadChatSession(id) {
+        sessionId = id;
+        localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+
+        setActiveChatItem(sessionId);
+        messagesEl.innerHTML = "";
+        resetSideInfo();
+
+        pdfInput.value = "";
+        if (!applyLocalPdfStatus(sessionId)) {
+          currentPdfName = "PDF";
+          if (uploadFileName) uploadFileName.textContent = "파일 선택";
+          if (uploadBox) uploadBox.classList.remove("has-file");
+          pdfStatus.textContent = "PDF 없음";
+        }
+
+        try {
+          const data = await fetchJson(
+            `/api/chat/messages?session_id=${encodeURIComponent(sessionId)}`,
+          );
+
+          const messages = data.messages || [];
+
+          if (messages.length === 0) {
+            renderWelcomeMessage();
+          } else {
+            messages.forEach((msg) => {
+              addMessage(msg.role, msg.content, { save: false });
+            });
+
+            const lastAssistantMeta = [...messages]
+              .reverse()
+              .find(
+                (msg) =>
+                  msg.role === "ai" ||
+                  msg.role === "assistant" ||
+                  msg.role === "bot",
+              );
+
+            if (lastAssistantMeta) {
+              updateAgentPanel(lastAssistantMeta);
+            }
+          }
+
+          await refreshPdfStatus();
+          scrollToBottom();
+          return;
+        } catch (err) {
+          // 서버 메시지 API가 아직 없어도 localStorage 내용으로 불러온다.
+        }
+
+        const localSession = findLocalSession(sessionId);
+        const messages = localSession?.messages || [];
+
+        if (messages.length === 0) {
+          renderWelcomeMessage();
+        } else {
+          messages.forEach((msg) => {
+            addMessage(msg.role, msg.content, { save: false });
+          });
+
+          const lastAssistantMeta = [...messages]
+            .reverse()
+            .find(
+              (msg) =>
+                msg.role === "ai" ||
+                msg.role === "assistant" ||
+                msg.role === "bot",
+            );
+
+          if (lastAssistantMeta) {
+            updateAgentPanel(lastAssistantMeta);
+          }
+        }
+
+        await refreshPdfStatus();
+        scrollToBottom();
+      }
+
+      async function startNewChat() {
+        let newSessionId = null;
+
+        try {
+          const data = await fetchJson("/api/chat/sessions", {
+            method: "POST",
+          });
+
+          newSessionId = data.session_id;
+        } catch (err) {
+          newSessionId = crypto.randomUUID();
+        }
+
+        sessionId = newSessionId || crypto.randomUUID();
+        localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+
+        pdfInput.value = "";
+        currentPdfName = "PDF";
+        if (uploadFileName) uploadFileName.textContent = "파일 선택";
+        if (uploadBox) uploadBox.classList.remove("has-file");
+        pdfStatus.textContent = "PDF 없음";
+
+        upsertLocalSession(sessionId, {
+          title: "새 대화",
+          pdf_name: null,
+          messages: [],
+        });
+
+        clearChatScreen();
+        await loadChatSessions();
+        setActiveChatItem(sessionId);
+
+        messageInput.focus();
+        refreshPdfStatus();
+      }
+
+      async function refreshPdfStatus() {
+        const localPdfName = getLocalSessionPdfName(sessionId);
+
+        try {
+          const res = await fetch(
+            `/api/pdf/status?session_id=${encodeURIComponent(sessionId)}`,
+          );
+          const data = await res.json();
+
+          if (data.has_pdf) {
+            currentPdfName = data.pdf_name || localPdfName || "PDF";
+
+            if (uploadFileName) uploadFileName.textContent = currentPdfName;
+            if (uploadBox) uploadBox.classList.add("has-file");
+
+            pdfStatus.textContent =
+              `업로드됨: ${currentPdfName}\n` +
+              `텍스트 길이: ${data.text_length ?? "-"}\n` +
+              `VectorStore: ${data.has_vectorstore ? "FAISS 사용 중" : "fallback 검색"}`;
+
+            updateLocalSessionPdfName(currentPdfName);
+            await loadChatSessions();
+            setActiveChatItem(sessionId);
+            return;
+          }
+
+          if (localPdfName) {
+            currentPdfName = localPdfName;
+
+            if (uploadFileName) uploadFileName.textContent = localPdfName;
+            if (uploadBox) uploadBox.classList.add("has-file");
+
+            pdfStatus.textContent =
+              `업로드됨: ${localPdfName}\n` +
+              `세션 기록에 저장됨\n` +
+              `서버 PDF 상태는 확인 필요`;
+            return;
+          }
+
+          currentPdfName = "PDF";
+          if (uploadFileName) uploadFileName.textContent = "파일 선택";
+          if (uploadBox) uploadBox.classList.remove("has-file");
+          pdfStatus.textContent = "PDF 없음";
+        } catch (err) {
+          if (localPdfName) {
+            currentPdfName = localPdfName;
+
+            if (uploadFileName) uploadFileName.textContent = localPdfName;
+            if (uploadBox) uploadBox.classList.add("has-file");
+
+            pdfStatus.textContent =
+              `업로드됨: ${localPdfName}\n` +
+              `세션 기록에 저장됨\n` +
+              `서버 상태 확인 실패`;
+            return;
+          }
+
+          currentPdfName = "PDF";
+          if (uploadFileName) uploadFileName.textContent = "파일 선택";
+          if (uploadBox) uploadBox.classList.remove("has-file");
+          pdfStatus.textContent = "상태 확인 실패";
+        }
+      }
+
+      async function uploadPdf(file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("session_id", sessionId);
+
+        pdfStatus.textContent = "PDF 업로드 중...";
+
+        try {
+          const res = await fetch("/api/pdf/upload", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.detail || "PDF 업로드 실패");
+          }
+
+          const data = await res.json();
+          currentPdfName = data.pdf_name || file.name || "PDF";
+          if (uploadFileName) uploadFileName.textContent = currentPdfName;
+          if (uploadBox) uploadBox.classList.add("has-file");
+
+          updateLocalSessionPdfName(currentPdfName);
+          pdfStatus.textContent = `업로드됨: ${currentPdfName}\n세션에 연결된 PDF`;
+          resetSideInfo();
+
+          addMessage("ai", `PDF 업로드 완료: ${data.pdf_name}`);
+
+          await refreshPdfStatus();
+          await loadChatSessions();
+          setActiveChatItem(sessionId);
+        } catch (err) {
+          addMessage("ai", `PDF 업로드 실패: ${err.message}`);
+          await refreshPdfStatus();
+        }
+      }
+
+      async function sendMessage() {
+        const message = messageInput.value.trim();
+        if (!message) return;
+
+        upsertLocalSession(sessionId, {
+          title: findLocalSession(sessionId)?.title || makeChatTitle(message),
+        });
+
+        addMessage("user", message);
+        updateCurrentChatTitle(message);
+
+        messageInput.value = "";
+        sendBtn.disabled = true;
+
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              message,
+              session_id: sessionId,
+            }),
+          });
+
+          if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.detail || "채팅 요청 실패");
+          }
+
+          const data = await res.json();
+
+          addMessage("ai", data.answer, {
+            extra: {
+              route: data.route,
+              used_tools: data.used_tools || [],
+              evidence: data.evidence || [],
+              trace: data.trace || [],
+            },
+          });
+
+          updateAgentPanel(data);
+
+          await refreshPdfStatus();
+          await loadChatSessions();
+          setActiveChatItem(sessionId);
+        } catch (err) {
+          addMessage("ai", `오류가 발생했습니다: ${err.message}`);
+        } finally {
+          sendBtn.disabled = false;
+          messageInput.focus();
+          scrollToBottom();
+        }
+      }
+
+      function openPdfPage(page, filename) {
+        const modal = document.getElementById("pdfModal");
+        const title = document.getElementById("pdfModalTitle");
+        const image = document.getElementById("pdfPageImage");
+
+        title.textContent = `${filename || currentPdfName || "PDF"} - page ${page}`;
+        image.src =
+          `/api/pdf/page-image?session_id=${encodeURIComponent(sessionId)}` +
+          `&page=${encodeURIComponent(page)}` +
+          `&t=${Date.now()}`;
+
+        modal.classList.add("open");
+      }
+
+      function closePdfModal() {
+        const modal = document.getElementById("pdfModal");
+        const image = document.getElementById("pdfPageImage");
+
+        image.src = "";
+        modal.classList.remove("open");
+      }
+
+      pdfInput.addEventListener("change", () => {
+        const file = pdfInput.files[0];
+        if (file) {
+          if (uploadFileName) uploadFileName.textContent = file.name;
+          if (uploadBox) uploadBox.classList.add("has-file");
+          uploadPdf(file);
+        }
+      });
+
+      sendBtn.addEventListener("click", sendMessage);
+
+      newChatBtn.addEventListener("click", startNewChat);
+
+      messageInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          sendMessage();
+        }
+      });
+
+      document.getElementById("pdfModal").addEventListener("click", (event) => {
+        if (event.target.id === "pdfModal") {
+          closePdfModal();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closePdfModal();
+        }
+      });
+
+      loadChatSessions();
+      loadChatSession(sessionId);
+      refreshPdfStatus();
+      scrollToBottom();
+    </script>
+  </body>
+</html>
