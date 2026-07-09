@@ -1,497 +1,253 @@
 # StudyMate Agent
 
-PDF 강의자료를 업로드하면 해당 문서를 기반으로 개념 설명, 요약, 공부 계획, 예상문제, 답안 채점, 오답 복습을 도와주는 FastAPI + LangGraph 기반 학습 Agent입니다.
+## 1. 서비스 소개
 
-사용자는 웹 채팅창에 자연어로 질문하고, Agent는 요청 의도를 `concept`, `summary`, `plan`, `quiz`, `review`, `followup`, `web_search`, `hybrid` 등으로 분류한 뒤 필요한 RAG 검색 또는 Tool을 실행합니다. Web UI에서는 PDF 업로드, 대화 기록, 사용 Tool, 참고 페이지, 실행 Trace, 오답 목록을 함께 확인할 수 있습니다.
+StudyMate Agent는 PDF 강의자료를 기반으로 시험공부를 도와주는 개인 학습 보조 Agent입니다.
 
-## 기획 의도
+시험공부를 할 때 GPT에게 PDF 기반 개념 설명이나 예상문제 생성을 요청하는 경우가 많지만, 대화가 길어지면 PDF 내용을 다시 업로드해야 하거나 이전에 틀린 문제를 찾기 위해 채팅 기록을 직접 뒤져야 하는 불편함이 있었습니다.  
+이러한 문제를 해결하기 위해 PDF 기반 질의응답, 예상문제 생성, 오답 복습을 하나의 학습 세션 안에서 이어서 사용할 수 있는 StudyMate Agent를 제작하였습니다.
 
-시험공부를 할 때 GPT에게 PDF 기반 개념 설명이나 예상문제 생성을 요청하는 경우가 많지만, 대화가 길어지면 PDF 내용을 다시 업로드해야 하거나 이전에 틀린 문제를 찾기 위해 채팅 기록을 직접 뒤져야 하는 불편함이 있었습니다. 이러한 문제를 해결하고자 StudyMate Agent를 제작하게 되었습니다.
+사용자는 PDF를 업로드한 뒤 자연어로 질문할 수 있으며, Agent는 업로드된 PDF를 검색하여 개념 설명, 요약, 공부 계획, 예상문제 생성, 답안 확인, 오답 복습 등을 수행합니다.
 
-## 주요 기능
+---
 
-- FastAPI 기반 Web Chat UI
-- LangGraph `StateGraph` 기반 Agent 실행 흐름
-- LLM + `PydanticOutputParser` 기반 자연어 요청 라우팅
-- PDF 업로드 및 세션별 PDF 상태 유지
-- `pypdf` 기반 PDF 텍스트 추출
-- OpenAI Embedding + FAISS 기반 PDF RAG 검색
-- OpenAI API 미설정 시 키워드 기반 fallback 검색
-- PDF 문단 관련성 평가 및 검색어 재작성 재시도
-- 개념 설명/요약용 Study RAG Graph 분리
-- Tool Agent 기반 공부 계획, 퀴즈, 웹 검색, Hybrid 요청 처리
-- Tavily 기반 최신 정보 및 외부 자료 검색
-- PDF 근거 페이지 표시 및 페이지 이미지 모달 확인
-- 예상문제 생성, 답안 제출, 정오답 판정
-- 오답 목록 저장 및 오답 상세 복습
-- 대화 세션 목록/메시지 JSON 저장
-- Request Logging Middleware 및 전역 예외 처리
+## 2. 주요 기능
 
-## 사용 예시
+| 기능                 | 설명                                                 |
+| -------------------- | ---------------------------------------------------- |
+| PDF 업로드           | 사용자가 강의자료 PDF를 업로드하면 세션 단위로 저장  |
+| PDF 기반 질의응답    | 업로드된 PDF 내용을 검색하여 개념 질문에 답변        |
+| PDF 요약             | 강의자료의 핵심 내용을 학습용으로 정리               |
+| 공부 계획 생성       | PDF 내용을 바탕으로 시험 대비 공부 계획 생성         |
+| 예상문제 생성        | PDF에서 시험에 나올 만한 내용을 바탕으로 문제 생성   |
+| 답안 확인            | 사용자가 제출한 답안을 확인하고 해설 제공            |
+| 오답 복습            | 틀린 문제를 따로 저장하고 다시 확인 가능             |
+| PDF 근거 페이지 확인 | 답변에 사용된 PDF 페이지를 이미지로 확인             |
+| 웹 검색 보조         | 필요한 경우 Tavily를 이용해 외부 자료 검색           |
+| 대화 세션 저장       | 이전 대화와 연결된 PDF, 메시지 기록을 다시 확인 가능 |
 
-```text
-현재 PDF 요약해줘
-이 PDF에서 중요한 개념이 뭐야?
-프로세스와 스레드 차이를 쉽게 설명해줘
-시험 대비 공부 계획 3일치 만들어줘
-예상문제 5개 만들어줘
-A가 정답이야
-방금 설명한 내용 더 자세히 알려줘
-이 개념의 최신 사례도 찾아줘
-PDF 내용이랑 웹 자료를 같이 참고해서 설명해줘
-내 답이 맞는지 채점해줘
-```
+---
 
-## LangGraph workflow
+## 3. 사용 시나리오
+
+### 시나리오 1. PDF 기반 개념 학습
+
+1. 사용자가 운영체제 강의자료 PDF를 업로드한다.
+2. 사용자가 “프로세스와 스레드 차이 설명해줘”라고 질문한다.
+3. Agent는 PDF에서 관련 내용을 검색한다.
+4. 검색된 PDF 근거를 바탕으로 개념을 설명한다.
+5. 사용자는 답변에 포함된 참고 페이지를 확인할 수 있다.
+
+### 시나리오 2. 시험 대비 예상문제 풀이
+
+1. 사용자가 “이 PDF에서 예상문제 만들어줘”라고 요청한다.
+2. Agent는 PDF 내용을 기반으로 예상문제를 생성한다.
+3. 사용자가 한 문제씩 답을 입력한다.
+4. Agent는 정답 여부와 해설을 제공한다.
+5. 틀린 문제는 오답 목록에 저장된다.
+
+### 시나리오 3. 오답 복습
+
+1. 사용자가 이전에 틀린 문제를 다시 확인하고 싶어 한다.
+2. 오답 목록에서 틀린 문제를 선택한다.
+3. 문제, 사용자의 답, 정답, 해설, PDF 근거를 다시 확인한다.
+4. 채팅 기록을 직접 뒤지지 않아도 오답 복습이 가능하다.
+
+---
+
+## 4. 전체 아키텍처
+
+StudyMate Agent는 FastAPI 기반 서버, LangGraph 기반 Agent Workflow, PDF RAG 검색, Tool Agent, Web UI로 구성됩니다.
 
 ```mermaid
 flowchart TD
-    START([START]) --> router[router: 요청 의도 분류]
+    User[사용자] --> UI[Web UI]
 
-    router -->|concept| concept[concept_node: Study RAG 개념 설명]
-    router -->|summary| summary[summary_node: Study RAG 요약]
-    router -->|plan / quiz / web_search / hybrid| tool_agent[tool_agent_node: Tool Agent 실행]
-    router -->|review| review[review_node: 답안 채점]
-    router -->|followup| followup[followup_node: 직전 답변 기반 후속 설명]
-    router -->|no_pdf| no_pdf[no_pdf_node: PDF 업로드 안내]
-    router -->|unknown| unknown[unknown_node: 지원 범위 안내]
+    UI --> API[FastAPI Server]
 
-    concept --> quality[quality_check_node]
-    summary --> quality
-    tool_agent --> quality
-    review --> quality
-    followup --> quality
+    API --> Upload[PDF Upload API]
+    API --> Chat[Chat API]
+    API --> Quiz[Quiz API]
+    API --> Wrong[Wrong Review API]
 
-    quality -->|retry| router
-    quality -->|finish| finalize[finalize_response]
-    no_pdf --> finalize
-    unknown --> finalize
-    finalize --> END([END])
+    Upload --> PDFStore[PDF Store]
+    Upload --> SessionPDF[Session PDF Metadata]
 
-    subgraph study_rag_graph[Study RAG Graph]
-        collect[collect_pdf_chunks: PDF 청크 검색]
-        grade[grade_pdf_relevance: 관련성 평가]
-        rewrite[rewrite_pdf_query: 검색어 재작성]
-        synthesize[synthesize_study_answer: 구조화 답변 생성]
-        collect --> grade
-        grade -->|관련 청크 충분| synthesize
-        grade -->|부족하면 재시도| rewrite
-        rewrite --> collect
-    end
+    Chat --> Graph[LangGraph Agent Workflow]
+    Quiz --> QuizStore[Quiz State Store]
+    Wrong --> QuizStore
 
-    concept -. 사용 .-> study_rag_graph
-    summary -. 사용 .-> study_rag_graph
+    Graph --> Router[Router Node]
+    Router --> Concept[Concept Node]
+    Router --> Summary[Summary Node]
+    Router --> ToolAgent[Tool Agent Node]
+    Router --> Review[Review Node]
+    Router --> Followup[Followup Node]
 
-    subgraph tools[Tool Agent Tools]
-        pdf_retriever[pdf_retriever]
-        pdf_summary[pdf_summary_tool]
-        quiz_tool[make_quiz_from_pdf]
-        plan_tool[study_plan_tool]
-        tavily[search_web_with_tavily]
-    end
+    Concept --> RAG[PDF RAG Pipeline]
+    Summary --> RAG
+    ToolAgent --> Tools[Agent Tools]
 
-    tool_agent -. 선택 실행 .-> pdf_retriever
-    tool_agent -. 선택 실행 .-> pdf_summary
-    tool_agent -. 선택 실행 .-> quiz_tool
-    tool_agent -. 선택 실행 .-> plan_tool
-    tool_agent -. 선택 실행 .-> tavily
+    RAG --> VectorStore[FAISS VectorStore]
+    RAG --> PDFStore
 
-    subgraph api_flows[API 보조 흐름]
-        upload[POST /api/pdf/upload]
-        chat[POST /api/chat]
-        quiz_start[POST /api/quiz/start]
-        quiz_answer[POST /api/quiz/answer]
-        wrongs[GET /api/quiz/wrongs]
-        page_image[GET /api/pdf/page-image]
-        history[(data/chat_history.json)]
-        pdf_meta[(data/session_pdfs.json)]
-        pdf_files[(data/pdfs/)]
-    end
+    Tools --> PDFRetriever[pdf_retriever]
+    Tools --> PDFSummary[pdf_summary_tool]
+    Tools --> QuizTool[make_quiz_from_pdf]
+    Tools --> PlanTool[study_plan_tool]
+    Tools --> Tavily[search_web_with_tavily]
 
-    upload --> pdf_files
-    upload --> pdf_meta
-    chat --> START
-    chat --> history
-    quiz_start --> history
-    quiz_answer --> history
-    wrongs --> quiz_answer
-    page_image --> pdf_files
+    Graph --> Memory[LangGraph MemorySaver]
+    API --> ChatHistory[chat_history.json]
+
+    Graph --> Response[최종 응답]
+    Response --> UI
 ```
+
+---
+
+## 5. Workflow 다이어그램
+
+아래 다이어그램은 LangGraph 기반 Agent의 전체 실행 흐름을 나타냅니다.  
+사용자 요청은 `router_node`에서 먼저 분류되고, 요청 유형에 따라 개념 설명, 요약, 퀴즈, 공부 계획, 오답 복습 등의 노드로 분기됩니다.
+
+```mermaid
+flowchart TD
+    START([START]) --> Router[router_node]
+
+    Router -->|concept| Concept[concept_node]
+    Router -->|summary| Summary[summary_node]
+    Router -->|plan| ToolAgent[tool_agent_node]
+    Router -->|quiz| ToolAgent
+    Router -->|web_search| ToolAgent
+    Router -->|hybrid| ToolAgent
+    Router -->|review| Review[review_node]
+    Router -->|followup| Followup[followup_node]
+    Router -->|no_pdf| NoPDF[no_pdf_node]
+    Router -->|unknown| Unknown[unknown_node]
+
+    Concept --> Quality[quality_check_node]
+    Summary --> Quality
+    ToolAgent --> Quality
+    Review --> Quality
+    Followup --> Quality
+
+    Quality -->|retry| Router
+    Quality -->|finish| Finalize[finalize_response]
+
+    NoPDF --> Finalize
+    Unknown --> Finalize
+
+    Finalize --> END([END])
+```
+
+서버 실행 후 LangGraph Mermaid 다이어그램은 다음 주소에서도 확인할 수 있습니다.
 
 ```text
 http://127.0.0.1:8000/api/graph/mermaid
 ```
 
-## 설치
+---
 
-### 1. 가상환경 생성
+## 6. RAG 처리 흐름
 
-```bash
-python -m venv venv
+PDF 기반 질의응답과 요약은 RAG 검색 흐름을 통해 처리됩니다.
+
+```mermaid
+flowchart TD
+    A[사용자 질문] --> B[PDF 청크 검색]
+    B --> C[관련성 평가]
+    C -->|관련 청크 충분| D[PDF 근거 기반 답변 생성]
+    C -->|관련 청크 부족| E[검색어 재작성]
+    E --> B
+    D --> F[참고 페이지 포함 응답]
 ```
 
-Windows PowerShell:
+### RAG 동작 과정
 
-```bash
-venv\Scripts\activate
-```
+1. 사용자가 PDF를 업로드한다.
+2. `pypdf`를 이용해 PDF 페이지별 텍스트를 추출한다.
+3. 추출된 텍스트를 청크 단위로 분할한다.
+4. OpenAI Embedding을 이용해 FAISS VectorStore를 생성한다.
+5. 사용자의 질문과 관련 있는 PDF 청크를 검색한다.
+6. 검색 결과의 관련성을 평가한다.
+7. 관련 청크가 부족하면 검색어를 재작성하여 다시 검색한다.
+8. 최종적으로 PDF 근거를 바탕으로 학습 답변을 생성한다.
 
-### 2. 패키지 설치
+OpenAI API Key가 없거나 VectorStore 생성에 실패하는 경우에는 키워드 기반 fallback 검색을 사용합니다.
 
-```bash
-pip install -r requirements.txt
-```
+---
 
-주요 패키지는 다음 계열을 사용합니다.
+## 7. 사용된 Tool 설명
 
-- `fastapi`
-- `uvicorn`
-- `langchain`
-- `langchain-openai`
-- `langchain-community`
-- `langgraph`
-- `faiss-cpu`
-- `pypdf`
-- `pymupdf`
-- `tavily-python`
+StudyMate Agent는 요청 유형에 따라 필요한 Tool을 선택하여 실행합니다.
 
-### 3. 환경변수 설정
+| Tool                     | 역할                                               |
+| ------------------------ | -------------------------------------------------- |
+| `pdf_retriever`          | 업로드된 PDF에서 질문과 관련 있는 문단 검색        |
+| `pdf_summary_tool`       | PDF 전체 요약에 필요한 핵심 문단 검색              |
+| `make_quiz_from_pdf`     | PDF 내용을 기반으로 예상문제 생성을 위한 근거 검색 |
+| `study_plan_tool`        | PDF 내용을 바탕으로 공부 계획 생성                 |
+| `search_web_with_tavily` | PDF 외부의 최신 정보나 보충 자료 검색              |
 
-`.env.example`을 복사해 `.env`를 만듭니다.
+Tool Agent는 사용자의 요청이 공부 계획, 예상문제, 웹 검색, Hybrid 검색처럼 도구 사용이 필요한 경우 실행됩니다.
 
-```bash
-copy .env.example .env
-```
+---
 
-`.env` 예시:
+## 8. Memory 설명
 
-```env
-OPENAI_API_KEY=your_openai_api_key_here
-MODEL_NAME=gpt-4o-mini
-TAVILY_API_KEY=tvly-your_api_key_here
-```
+본 프로젝트에서는 학습 흐름을 유지하기 위해 여러 종류의 메모리를 사용합니다.
 
-`OPENAI_API_KEY`가 없으면 PDF 텍스트 일부를 기반으로 한 fallback 응답은 가능하지만, LLM 라우팅, 구조화 답변, FAISS 임베딩 검색, 퀴즈 생성 품질은 제한됩니다.
+| Memory                  | 설명                                       |
+| ----------------------- | ------------------------------------------ |
+| `LangGraph MemorySaver` | Agent 실행 중 대화 상태와 흐름을 유지      |
+| `localStorage`          | Web UI에서 현재 세션 ID 저장               |
+| `chat_history.json`     | 세션별 대화 기록 저장                      |
+| `session_pdfs.json`     | 세션 ID와 업로드된 PDF 파일 연결 정보 저장 |
+| `QUIZ_STATES`           | 현재 진행 중인 퀴즈 상태 저장              |
+| 오답 목록               | 사용자가 틀린 문제를 세션별로 저장         |
 
-`TAVILY_API_KEY`는 최신 정보, 외부 사례, 웹 검색 요청을 처리하는 `search_web_with_tavily` Tool에서 사용합니다.
+이를 통해 사용자는 매번 PDF를 다시 업로드하지 않고, 같은 세션에서 이전 대화와 PDF 기반 학습 흐름을 이어갈 수 있습니다.
 
-### 4. 서버 실행
+---
 
-```bash
-uvicorn server:app --reload --host 127.0.0.1 --port 8000
-```
+## 9. Middleware 설명
 
-또는 다음 명령으로도 실행할 수 있습니다.
+서버에는 Request Logging Middleware가 적용되어 있습니다.
 
-```bash
-python server.py
-```
+### 주요 역할
 
-브라우저 접속:
+- 요청 시작 및 종료 로그 기록
+- HTTP method, path, status code 기록
+- 요청 처리 시간 계산
+- 응답 헤더에 `X-Process-Time-ms` 추가
+- 서버 오류 발생 시 JSON 형태의 오류 응답 반환
 
-```text
-http://127.0.0.1:8000
-```
+Middleware를 통해 API 요청 흐름을 확인할 수 있고, 디버깅 및 오류 추적이 쉬워집니다.
 
-## Web UI
+---
 
-### PDF 업로드
+## 10. API 구성
 
-오른쪽 패널에서 PDF 파일을 업로드합니다. 업로드된 파일은 `data/pdfs/`에 저장되고, 세션별 PDF 연결 정보는 `data/session_pdfs.json`에 기록됩니다.
+| Method | URL                           | 설명                                       |
+| ------ | ----------------------------- | ------------------------------------------ |
+| GET    | `/api/health`                 | 서버 상태 확인                             |
+| GET    | `/api/graph/mermaid`          | LangGraph Workflow Mermaid 다이어그램 조회 |
+| POST   | `/api/pdf/upload`             | PDF 업로드                                 |
+| GET    | `/api/pdf/status`             | 현재 세션의 PDF 상태 확인                  |
+| GET    | `/api/pdf/page-image`         | PDF 특정 페이지 이미지 조회                |
+| POST   | `/api/chat`                   | Agent에게 학습 질문 전송                   |
+| GET    | `/api/chat/sessions`          | 대화 세션 목록 조회                        |
+| POST   | `/api/chat/sessions`          | 새 대화 세션 생성                          |
+| GET    | `/api/chat/messages`          | 특정 세션의 메시지 조회                    |
+| POST   | `/api/quiz/start`             | 예상문제 풀이 시작                         |
+| POST   | `/api/quiz/answer`            | 퀴즈 답안 제출                             |
+| GET    | `/api/quiz/wrongs`            | 오답 목록 조회                             |
+| GET    | `/api/quiz/wrongs/{wrong_id}` | 오답 상세 조회                             |
 
-PDF에서 텍스트를 추출하지 못하면 업로드가 실패합니다. 스캔본 PDF는 별도 OCR 처리가 필요합니다.
+---
 
-### Chat
-
-채팅창에 자연어로 학습 요청을 입력합니다. Agent는 요청을 분류한 뒤 PDF RAG 검색, Tool Agent 실행, 답안 채점, 후속 질문 처리 중 적절한 흐름을 선택합니다.
-
-답변에는 가능한 경우 참고한 PDF 페이지가 포함됩니다. 페이지 근거를 클릭하면 해당 PDF 페이지 이미지가 모달로 표시됩니다.
-
-### Agent 판단 패널
-
-오른쪽 패널에서 최근 응답의 내부 실행 정보를 확인할 수 있습니다.
-
-- Route
-- 사용 Tool
-- RAG 근거
-- Agent Trace
-
-### Quiz / 오답 복습
-
-사용자가 “예상문제 5개 만들어줘”처럼 요청하면 `/api/quiz/start`가 호출되어 PDF 근거 기반 문제가 생성됩니다.
-
-퀴즈 진행 중에는 사용자의 답안을 `/api/quiz/answer`로 제출하며, 오답은 세션별 메모리에 저장됩니다. 오답 목록에서 항목을 클릭하면 문제, 내 답, 정답, 해설, PDF 근거를 다시 확인할 수 있습니다.
-
-## API
-
-### Health
-
-```http
-GET /api/health
-```
-
-서비스 상태, 모델명, 사용 가능한 Tool, route 목록을 반환합니다.
-
-### Mermaid Graph
-
-```http
-GET /api/graph/mermaid
-```
-
-LangGraph 실행 흐름을 Mermaid 텍스트로 반환합니다.
-
-### PDF 업로드
-
-```http
-POST /api/pdf/upload
-```
-
-`multipart/form-data` 요청:
-
-```text
-file: 업로드할 PDF
-session_id: 현재 대화 세션 ID
-```
-
-응답:
-
-```json
-{
-  "ok": true,
-  "pdf_name": "lecture.pdf",
-  "session_id": "browser-session-id",
-  "text_length": 12000,
-  "has_vectorstore": true
-}
-```
-
-### PDF 상태
-
-```http
-GET /api/pdf/status?session_id=browser-session-id
-```
-
-현재 세션에 연결된 PDF, 텍스트 길이, VectorStore 사용 여부를 반환합니다.
-
-### PDF 페이지 이미지
-
-```http
-GET /api/pdf/page-image?session_id=browser-session-id&page=1&pdf_name=lecture.pdf
-```
-
-PyMuPDF로 특정 PDF 페이지를 PNG 이미지로 렌더링해 반환합니다.
-
-### Chat
-
-```http
-POST /api/chat
-```
-
-요청:
-
-```json
-{
-  "message": "이 PDF의 핵심 개념을 정리해줘",
-  "session_id": "browser-session-id"
-}
-```
-
-응답에는 `answer`, `route`, `session_id`, `pdf_name`, `used_tools`, `evidence`, `trace`가 포함됩니다.
-
-### 대화 세션
-
-```http
-GET /api/chat/sessions
-POST /api/chat/sessions
-GET /api/chat/messages?session_id=browser-session-id
-```
-
-대화 목록을 조회하거나 새 대화를 만들고, 특정 세션의 메시지를 불러옵니다.
-
-호환용 API도 함께 제공됩니다.
-
-```http
-GET /api/chats
-POST /api/chats
-GET /api/chats/{session_id}
-DELETE /api/chats/{session_id}
-```
-
-### Quiz 시작
-
-```http
-POST /api/quiz/start
-```
-
-요청:
-
-```json
-{
-  "session_id": "browser-session-id",
-  "topic": "운영체제 예상문제 5개",
-  "count": 5
-}
-```
-
-PDF 근거를 검색한 뒤 예상문제를 생성하고 첫 번째 문제를 반환합니다.
-
-### Quiz 답안 제출
-
-```http
-POST /api/quiz/answer
-```
-
-요청:
-
-```json
-{
-  "session_id": "browser-session-id",
-  "answer": "A"
-}
-```
-
-정답 여부, 해설, 다음 문제, 오답 목록을 반환합니다.
-
-### 오답 조회
-
-```http
-GET /api/quiz/wrongs?session_id=browser-session-id
-GET /api/quiz/wrongs/{wrong_id}?session_id=browser-session-id
-```
-
-세션별 오답 목록과 오답 상세 해설을 조회합니다.
-
-## LangGraph Agent
-
-Agent 상태는 `agent/graph.py`의 `State`로 관리합니다.
-
-주요 상태:
-
-- `messages`
-- `session_id`
-- `route`
-- `final_response`
-- `trace`
-- `used_tools`
-- `evidence`
-- `retry_count`
-- `quality_next`
-
-노드:
-
-- `router`: LLM 또는 키워드 fallback으로 요청 route 결정
-- `concept_node`: PDF 기반 개념 설명용 Study RAG 실행
-- `summary_node`: PDF 전체 요약용 Study RAG 실행
-- `tool_agent_node`: Tool Agent가 필요한 도구를 선택해 실행
-- `review_node`: 사용자 답안을 PDF 근거와 비교해 채점
-- `followup_node`: 직전 AI 답변을 바탕으로 후속 요청 처리
-- `quality_check_node`: 실패성 응답 감지 시 최대 1회 재시도
-- `no_pdf_node`: PDF가 없을 때 업로드 안내
-- `unknown_node`: 지원 범위 안내
-- `finalize_response`: 최종 AIMessage 생성
-
-조건부 분기:
-
-- PDF가 필요한 route인데 세션에 PDF가 없으면 `no_pdf`로 전환
-- `concept`, `summary`는 Study RAG Graph로 처리
-- `plan`, `quiz`, `web_search`, `hybrid`는 Tool Agent로 처리
-- 응답이 비어 있거나 오류성 문구를 포함하면 `quality_check_node`에서 재시도
-
-Memory:
-
-- LangGraph `MemorySaver` checkpointer 사용
-- Web UI는 `localStorage`에 현재 `session_id` 저장
-- 서버는 `data/chat_history.json`에 세션별 메시지 저장
-
-## Tools
-
-### `pdf_retriever`
-
-업로드된 PDF에서 질문과 관련 있는 청크를 검색합니다. 응답에는 참고 페이지와 검색 문맥이 포함됩니다.
-
-### `pdf_summary_tool`
-
-PDF 전체 요약에 필요한 핵심 문단을 검색합니다.
-
-### `make_quiz_from_pdf`
-
-PDF 내용을 바탕으로 예상문제를 만들기 위한 근거를 검색합니다. 실제 구조화 퀴즈 생성은 `/api/quiz/start`에서도 별도로 수행됩니다.
-
-### `study_plan_tool`
-
-업로드된 PDF 내용을 기준으로 며칠 단위의 공부 계획을 세우기 위한 핵심 문단을 검색합니다.
-
-### `search_web_with_tavily`
-
-최신 정보, 외부 사례, PDF 밖의 보충 설명이 필요할 때 Tavily Search API를 사용합니다.
-
-## RAG 구성
-
-PDF 검색 파이프라인은 `services/pdf_store.py`, `agent/chains.py`, `agent/tools.py`에 걸쳐 구성됩니다.
-
-1. 사용자가 PDF를 업로드
-2. `pypdf`로 페이지별 텍스트 추출
-3. 페이지 문서를 900자 단위 청크로 분할
-4. OpenAI Embedding이 가능하면 FAISS VectorStore 생성
-5. 질문 시 FAISS retriever로 관련 청크 검색
-6. VectorStore가 없거나 실패하면 키워드 기반 fallback 검색
-7. LLM으로 관련성 평가
-8. 관련 청크가 부족하면 검색어 재작성 후 재검색
-9. PDF 근거를 바탕으로 구조화 학습 답변 생성
-
-PDF 저장 경로:
-
-```text
-data/
-├── pdfs/
-├── session_pdfs.json
-└── chat_history.json
-```
-
-## 저장소
-
-### `data/chat_history.json`
-
-대화 세션 목록과 메시지를 저장합니다.
-
-저장 항목:
-
-- `session_id`
-- `title`
-- `pdf_name`
-- `created_at`
-- `updated_at`
-- `messages`
-
-각 메시지에는 role, content, route, 사용 Tool, 근거 페이지가 함께 저장될 수 있습니다.
-
-### `data/session_pdfs.json`
-
-세션 ID와 업로드된 PDF 파일명을 연결합니다. 서버 재시작 후 같은 세션을 열면 가능한 경우 PDF 텍스트와 검색 인덱스를 복원합니다.
-
-### 메모리 상태
-
-다음 항목은 서버 프로세스 메모리에 유지됩니다.
-
-- `services.session_store.SESSIONS`
-- `services.quiz_store.QUIZ_STATES`
-- LangGraph `MemorySaver`
-
-따라서 프로세스 재시작 시 진행 중인 퀴즈 상태와 일부 메모리 대화 흐름은 초기화될 수 있습니다.
-
-## Middleware
-
-`server.py`에는 Request Logging Middleware가 적용되어 있습니다.
-
-기능:
-
-- 요청 시작/종료 로그 기록
-- HTTP method/path/status 로깅
-- 처리 시간 계산
-- 응답 헤더 `X-Process-Time-ms` 추가
-- 예외 발생 시 전역 예외 핸들러로 JSON 오류 반환
-
-## 프로젝트 구조
+## 11. 프로젝트 구조
 
 ```text
 studymate_ready/
@@ -501,40 +257,202 @@ studymate_ready/
 │   ├── prompts.py
 │   ├── schemas.py
 │   └── tools.py
+│
 ├── services/
 │   ├── chat_history.py
 │   ├── chat_store.py
 │   ├── pdf_store.py
 │   ├── quiz_store.py
 │   └── session_store.py
+│
 ├── static/
 │   ├── index.html
 │   ├── app.js
 │   └── style.css
+│
 ├── data/
 │   ├── pdfs/
 │   ├── chat_history.json
 │   └── session_pdfs.json
+│
 ├── server.py
 ├── requirements.txt
 ├── .env.example
 └── README.md
 ```
 
-## 한계 및 개선 방향
+### 폴더별 역할
 
-### 한계
+| 폴더/파일          | 설명                                            |
+| ------------------ | ----------------------------------------------- |
+| `agent/`           | LangGraph Agent, Tool, Prompt, Schema 관련 코드 |
+| `services/`        | PDF 저장, 세션 저장, 채팅 기록, 퀴즈 상태 관리  |
+| `static/`          | Web UI HTML, CSS, JavaScript                    |
+| `data/`            | 업로드된 PDF, 대화 기록, 세션 PDF 정보 저장     |
+| `server.py`        | FastAPI 서버 실행 파일                          |
+| `requirements.txt` | 실행에 필요한 패키지 목록                       |
+| `.env.example`     | 환경변수 예시 파일                              |
 
-- PDF 텍스트 추출은 `pypdf` 기반이므로 스캔본이나 이미지 중심 PDF는 OCR 없이는 처리하기 어렵습니다.
-- FAISS 인덱스는 세션 메모리에 생성되며, 영구 Vector DB로 저장하지 않습니다.
-- 퀴즈 진행 상태와 오답 상태는 서버 메모리에 저장되어 프로세스 재시작 시 사라집니다.
-- `OPENAI_API_KEY`가 없으면 구조화 답변, 임베딩 검색, 퀴즈 생성 품질이 제한됩니다.
-- Tavily 패키지 또는 `TAVILY_API_KEY`가 없으면 웹 검색 Tool은 사용할 수 없습니다.
+---
 
-### 개선 방향
+## 12. 설치 및 실행 방법
 
-- 스캔본 PDF를 위한 OCR 파이프라인을 추가하면 더 다양한 강의자료를 처리할 수 있습니다.
-- FAISS 인덱스와 퀴즈 상태를 디스크 또는 DB에 저장하면 서버 재시작 후에도 학습 흐름을 이어갈 수 있습니다.
-- 사용자 로그인과 DB 기반 세션 저장을 도입하면 여러 사용자의 학습 기록을 안정적으로 분리할 수 있습니다.
-- 퀴즈 유형, 난이도, 범위를 UI에서 직접 조절할 수 있도록 확장할 수 있습니다.
-- PDF 여러 개를 한 세션에 연결하고 문서별 출처를 비교하는 Hybrid RAG 기능을 추가할 수 있습니다.
+### 1. 프로젝트 클론
+
+```bash
+git clone https://github.com/syprisilla/Studymate_Agent.git
+cd Studymate_Agent
+```
+
+### 2. 가상환경 생성
+
+```bash
+python -m venv venv
+```
+
+### 3. 가상환경 실행
+
+Windows PowerShell 기준:
+
+```bash
+venv\Scripts\activate
+```
+
+macOS 또는 Linux 기준:
+
+```bash
+source venv/bin/activate
+```
+
+### 4. 패키지 설치
+
+```bash
+pip install -r requirements.txt
+```
+
+### 5. 환경변수 설정
+
+`.env.example` 파일을 복사하여 `.env` 파일을 생성합니다.
+
+Windows PowerShell 기준:
+
+```bash
+copy .env.example .env
+```
+
+macOS 또는 Linux 기준:
+
+```bash
+cp .env.example .env
+```
+
+`.env` 파일 예시는 다음과 같습니다.
+
+```env
+OPENAI_API_KEY=your_openai_api_key_here
+MODEL_NAME=gpt-4o-mini
+TAVILY_API_KEY=your_tavily_api_key_here
+```
+
+### 6. 서버 실행
+
+```bash
+uvicorn server:app --reload --host 127.0.0.1 --port 8000
+```
+
+또는 다음 명령어로 실행할 수 있습니다.
+
+```bash
+python server.py
+```
+
+### 7. 브라우저 접속
+
+```text
+http://127.0.0.1:8000
+```
+
+---
+
+## 13. 실행 가능한 제출 형태
+
+본 프로젝트는 실행 가능한 형태로 제출하기 위해 다음 파일을 포함합니다.
+
+| 파일               | 설명                                            |
+| ------------------ | ----------------------------------------------- |
+| `server.py`        | FastAPI 서버 실행 파일                          |
+| `requirements.txt` | 필요한 Python 패키지 목록                       |
+| `.env.example`     | API Key 설정 예시                               |
+| `README.md`        | 서비스 설명, 실행 방법, 아키텍처, Workflow 설명 |
+| `static/`          | 프론트엔드 파일                                 |
+| `agent/`           | LangGraph Agent 관련 코드                       |
+| `services/`        | PDF, 세션, 퀴즈, 채팅 기록 관리 코드            |
+
+실행 시 `requirements.txt`를 통해 필요한 패키지를 설치할 수 있으며, `.env` 파일에 API Key를 설정한 뒤 서버를 실행하면 웹 브라우저에서 서비스를 사용할 수 있습니다.
+
+---
+
+## 14. 사용 예시
+
+```text
+이 PDF 핵심 내용 요약해줘
+프로세스와 스레드 차이 설명해줘
+시험에 나올 만한 예상문제 만들어줘
+운영체제 시험 대비 공부 계획 세워줘
+방금 문제 정답은 B야
+내가 틀린 문제 다시 보여줘
+이 개념을 웹 자료랑 같이 설명해줘
+```
+
+---
+
+## 15. 한계점
+
+현재 구현에는 다음과 같은 한계가 있습니다.
+
+| 한계                       | 설명                                                                                    |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| 스캔본 PDF 처리 한계       | `pypdf` 기반 텍스트 추출을 사용하므로 이미지 중심 PDF는 OCR 없이는 처리하기 어렵습니다. |
+| VectorStore 영구 저장 한계 | FAISS 인덱스가 완전한 DB 형태로 영구 관리되지는 않습니다.                               |
+| 퀴즈 상태 초기화 가능성    | 일부 퀴즈 진행 상태는 서버 메모리에 저장되어 서버 재시작 시 초기화될 수 있습니다.       |
+| API Key 의존성             | OpenAI API Key가 없으면 LLM 응답, 임베딩 검색, 퀴즈 생성 품질이 제한됩니다.             |
+| 웹 검색 제한               | Tavily API Key가 없으면 외부 웹 검색 기능을 사용할 수 없습니다.                         |
+| 다중 사용자 관리 한계      | 로그인 기반 사용자 분리 기능은 아직 구현되어 있지 않습니다.                             |
+
+---
+
+## 16. 향후 개선 방향
+
+향후 다음 기능을 추가하여 학습 보조 Agent의 완성도를 높일 수 있습니다.
+
+- OCR 기능 추가를 통한 스캔본 PDF 처리
+- FAISS 인덱스 및 퀴즈 상태의 DB 저장
+- 사용자 로그인 및 사용자별 학습 기록 관리
+- 여러 PDF를 하나의 세션에서 함께 학습하는 기능
+- 문제 유형 선택 기능 추가
+- 난이도별 예상문제 생성 기능 추가
+- 오답률 기반 취약 개념 분석 기능 추가
+- 시험 범위별 자동 요약 기능 추가
+- PDF 페이지 이미지와 해설을 더 직접적으로 연결하는 복습 화면 개선
+
+---
+
+## 17. 평가 기준 반영 내용
+
+| 평가 항목   | 반영 내용                                                                                       |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| 코드 품질   | Agent, Tool, Service, UI 역할을 폴더별로 분리하여 구조화                                        |
+| 가독성      | LangGraph Node와 Tool 단위를 분리하여 실행 흐름을 이해하기 쉽게 구성                            |
+| 예외처리    | PDF 미업로드, API Key 미설정, PDF 텍스트 추출 실패 상황 처리                                    |
+| 재사용성    | PDF 검색, 요약, 퀴즈, 공부 계획 기능을 Tool 단위로 구성                                         |
+| 문서화      | 서비스 소개, 사용 시나리오, 아키텍처, Workflow, 설치 방법, Tool/RAG/Memory/Middleware 설명 포함 |
+| 다이어그램  | Mermaid 문법을 사용해 전체 아키텍처와 Workflow 다이어그램 제공                                  |
+| 실행 가능성 | `requirements.txt`, `.env.example`, 실행 명령어를 포함하여 재현 가능하게 구성                   |
+
+---
+
+## 18. 정리
+
+StudyMate Agent는 단순히 PDF 내용을 요약하는 프로그램이 아니라, 시험공부 과정에서 반복적으로 발생하는 PDF 재업로드, 예상문제 관리, 오답 복습의 불편함을 줄이기 위한 학습 보조 Agent입니다.
+
+LangGraph 기반 Workflow를 사용하여 사용자 요청을 분류하고, PDF RAG 검색과 Tool Agent를 활용해 개념 설명, 요약, 공부 계획, 예상문제 생성, 오답 복습을 하나의 흐름으로 연결하였습니다.
