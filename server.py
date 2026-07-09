@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import logging
 import shutil
+import time
 import uuid
 from pathlib import Path
 
 import fitz
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 
@@ -42,8 +44,62 @@ from services.session_store import (
 )
 
 
+logger = logging.getLogger("studymate")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+
 app = FastAPI(title="StudyMate Agent")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    start_time = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.exception(
+            "request_failed method=%s path=%s elapsed_ms=%.2f",
+            request.method,
+            request.url.path,
+            elapsed_ms,
+        )
+        raise
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(
+        "request_done method=%s path=%s status=%s elapsed_ms=%.2f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+
+    response.headers["X-Process-Time-ms"] = f"{elapsed_ms:.2f}"
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "unhandled_exception method=%s path=%s error=%s",
+        request.method,
+        request.url.path,
+        exc,
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "ok": False,
+            "error": "internal_server_error",
+            "detail": "서버 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+        },
+    )
 
 
 @app.get("/")
@@ -176,6 +232,7 @@ def upload_pdf(file: UploadFile = File(...), session_id: str = Form("default")):
 
     page_docs = read_pdf_documents(path, file.filename)
     text = docs_to_text(page_docs)
+
     if not text:
         try:
             path.unlink(missing_ok=True)
@@ -232,6 +289,8 @@ def chat(req: ChatRequest):
             ],
             "used_tools": [],
             "evidence": [],
+            "retry_count": 0,
+            "max_retries": 1,
         },
         config={"configurable": {"thread_id": req.session_id}},
     )

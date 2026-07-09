@@ -4,6 +4,8 @@ from typing import Literal
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
+from langchain_core.prompts import PromptTemplate
 from langgraph.graph import END, START, StateGraph
 
 from agent.schemas import RelevanceCheck, StudyAnswer, StudyRAGState
@@ -46,15 +48,36 @@ def grade_pdf_relevance(state: StudyRAGState) -> dict:
         }
 
     llm = init_chat_model(f"openai:{MODEL_NAME}", temperature=0)
-    checker = llm.with_structured_output(RelevanceCheck)
+    output_parser = PydanticOutputParser(pydantic_object=RelevanceCheck)
+
+    prompt = PromptTemplate.from_template(
+        """
+너는 PDF 검색 결과의 관련성을 평가하는 도우미다.
+
+질문:
+{query}
+
+PDF 문단:
+{context}
+
+이 문단이 질문에 답하는 데 실제로 도움이 되는지 판단해라.
+반드시 아래 형식 지침을 따르는 JSON으로만 답해라.
+
+{format_instructions}
+"""
+    )
+
+    relevance_chain = prompt | llm | output_parser
     relevant: list = []
 
     for doc in state.get("documents", []):
         try:
-            result = checker.invoke(
-                f"질문: {state['query']}\n\n"
-                f"문단:\n{doc.page_content[:1000]}\n\n"
-                "이 문단이 질문에 답하는 데 실제로 도움이 되는지 판단하세요."
+            result = relevance_chain.invoke(
+                {
+                    "query": state["query"],
+                    "context": doc.page_content[:1000],
+                    "format_instructions": output_parser.get_format_instructions(),
+                }
             )
             if result.is_relevant:
                 relevant.append(doc)
@@ -63,7 +86,9 @@ def grade_pdf_relevance(state: StudyRAGState) -> dict:
 
     return {
         "relevant_documents": relevant,
-        "trace": state.get("trace", []) + [f"grade_pdf_relevance: 관련 청크 {len(relevant)}개 선별"],
+        "trace": state.get("trace", []) + [
+            f"grade_pdf_relevance: PromptTemplate | LLM | PydanticOutputParser Chain으로 관련 청크 {len(relevant)}개 선별"
+        ],
     }
 
 
@@ -85,18 +110,32 @@ def rewrite_pdf_query(state: StudyRAGState) -> dict:
         }
 
     llm = init_chat_model(f"openai:{MODEL_NAME}", temperature=0.3)
+
+    prompt = PromptTemplate.from_template(
+        """
+다음 검색어로 PDF에서 충분한 관련 내용을 찾지 못했다.
+
+기존 검색어:
+{query}
+
+같은 의도를 유지하면서 PDF 검색에 더 잘 맞는 구체적인 검색어 1개만 출력해라.
+설명은 쓰지 말고 검색어만 출력해라.
+"""
+    )
+
+    rewrite_chain = prompt | llm | StrOutputParser()
+
     try:
-        new_query = llm.invoke(
-            f"다음 검색어로 PDF에서 충분한 관련 내용을 찾지 못했습니다: {state['query']}\n"
-            "같은 의도를 유지하면서 더 구체적인 검색어 1개만 출력하세요."
-        ).content.strip()
+        new_query = rewrite_chain.invoke({"query": state["query"]}).strip()
     except Exception:
         new_query = state["query"]
 
     return {
         "query": new_query,
         "retry_count": state.get("retry_count", 0) + 1,
-        "trace": state.get("trace", []) + [f"rewrite_pdf_query: 검색어 재작성 → {new_query}"],
+        "trace": state.get("trace", []) + [
+            f"rewrite_pdf_query: PromptTemplate | LLM | StrOutputParser Chain으로 검색어 재작성 → {new_query}"
+        ],
     }
 
 
@@ -120,7 +159,8 @@ def synthesize_study_answer(state: StudyRAGState) -> dict:
         }
 
     llm = init_chat_model(f"openai:{MODEL_NAME}", temperature=0.2)
-    parser = llm.with_structured_output(StudyAnswer)
+    output_parser = PydanticOutputParser(pydantic_object=StudyAnswer)
+
     mode_instruction = (
         "PDF 전체를 요약하세요. 핵심 개념, 주요 내용, 시험 포인트, 확인 질문을 한 번만 정리하세요."
         if state["mode"] == "summary"
@@ -132,18 +172,38 @@ def synthesize_study_answer(state: StudyRAGState) -> dict:
         )
     )
 
+    prompt = PromptTemplate.from_template(
+        """
+너는 PDF 기반 CS 학습 도우미다.
+반드시 주어진 PDF 근거 안에서만 답한다.
+원문을 그대로 길게 복사하지 말고 시험 공부에 바로 쓸 수 있게 재구성한다.
+제목에는 StudyAnswer, JSON, Pydantic, schema 같은 내부 구현 용어를 절대 쓰지 않는다.
+
+지시:
+{mode_instruction}
+
+질문:
+{query}
+
+PDF 근거:
+{context}
+
+반드시 아래 형식 지침을 따르는 JSON으로만 답해라.
+
+{format_instructions}
+"""
+    )
+
+    answer_chain = prompt | llm | output_parser
+
     try:
-        structured = parser.invoke(
-            [
-                SystemMessage(
-                    content=(
-                        "너는 PDF 기반 CS 학습 도우미다. 반드시 주어진 PDF 근거 안에서만 답한다. "
-                        "원문을 그대로 길게 복사하지 말고 시험 공부에 바로 쓸 수 있게 재구성한다. "
-                        "제목에는 StudyAnswer, JSON, Pydantic, schema 같은 내부 구현 용어를 절대 쓰지 않는다."
-                    )
-                ),
-                HumanMessage(content=f"지시: {mode_instruction}\n질문: {state['query']}\n\nPDF 근거:\n{context}"),
-            ]
+        structured = answer_chain.invoke(
+            {
+                "mode_instruction": mode_instruction,
+                "query": state["query"],
+                "context": context,
+                "format_instructions": output_parser.get_format_instructions(),
+            }
         )
         answer = format_study_answer(structured, evidence)
     except Exception:
@@ -157,7 +217,9 @@ def synthesize_study_answer(state: StudyRAGState) -> dict:
     return {
         "answer": answer,
         "evidence": evidence,
-        "trace": state.get("trace", []) + [f"synthesize_study_answer: 구조화 출력 생성, 근거 페이지 {len(evidence)}개"],
+        "trace": state.get("trace", []) + [
+            f"synthesize_study_answer: PromptTemplate | LLM | PydanticOutputParser Chain으로 구조화 출력 생성, 근거 페이지 {len(evidence)}개"
+        ],
     }
 
 
@@ -167,15 +229,20 @@ def build_study_rag_graph():
     builder.add_node("grade_pdf_relevance", grade_pdf_relevance)
     builder.add_node("rewrite_pdf_query", rewrite_pdf_query)
     builder.add_node("synthesize_study_answer", synthesize_study_answer)
+
     builder.add_edge(START, "collect_pdf_chunks")
     builder.add_edge("collect_pdf_chunks", "grade_pdf_relevance")
     builder.add_conditional_edges(
         "grade_pdf_relevance",
         should_retry_pdf_search,
-        {"synthesize": "synthesize_study_answer", "rewrite_query": "rewrite_pdf_query"},
+        {
+            "synthesize": "synthesize_study_answer",
+            "rewrite_query": "rewrite_pdf_query",
+        },
     )
     builder.add_edge("rewrite_pdf_query", "collect_pdf_chunks")
     builder.add_edge("synthesize_study_answer", END)
+
     return builder.compile()
 
 
