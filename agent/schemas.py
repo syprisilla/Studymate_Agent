@@ -13,6 +13,8 @@ class RouteDecision(BaseModel):
         "quiz",
         "review",
         "followup",
+        "web_search",
+        "hybrid",
         "unknown",
     ] = Field(
         description=(
@@ -22,6 +24,8 @@ class RouteDecision(BaseModel):
             "quiz=예상문제/퀴즈 요청, "
             "review=사용자 답안 채점/오답 복습 요청, "
             "followup=직전 답변을 이어서 더 묻는 요청, "
+            "web_search=PDF 밖의 최신 정보/외부 사례/웹 검색 요청, "
+            "hybrid=PDF 근거와 외부 웹 검색이 모두 필요한 요청, "
             "unknown=PDF/공부와 무관한 요청"
         )
     )

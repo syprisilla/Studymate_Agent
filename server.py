@@ -102,6 +102,48 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+def find_pdf_by_original_name(pdf_name: str | None) -> Path | None:
+    if not pdf_name:
+        return None
+
+    target_name = Path(pdf_name).name
+
+    for candidate in PDF_DIR.glob(f"*_{target_name}"):
+        if candidate.exists() and candidate.is_file():
+            return candidate
+
+    direct_path = PDF_DIR / target_name
+    if direct_path.exists() and direct_path.is_file():
+        return direct_path
+
+    return None
+
+
+def ensure_session_pdf_loaded(session_id: str, pdf_name: str | None = None):
+    session = get_session(session_id)
+
+    if session.pdf_path and session.pdf_path.exists() and session.pdf_text:
+        return session
+
+    if pdf_name:
+        pdf_path = find_pdf_by_original_name(pdf_name)
+
+        if pdf_path:
+            page_docs = read_pdf_documents(pdf_path, Path(pdf_name).name)
+            text = docs_to_text(page_docs)
+
+            if text:
+                session.pdf_path = pdf_path
+                session.pdf_name = Path(pdf_name).name
+                session.page_documents = page_docs
+                session.pdf_text = text
+                build_index(session)
+                persist_session_pdf(session)
+                safe_update_chat_pdf_name(session_id, session.pdf_name)
+
+    return session
+
+
 @app.get("/")
 def root():
     return FileResponse(STATIC_DIR / "index.html")
@@ -116,7 +158,7 @@ def health():
         "model": MODEL_NAME,
         "langgraph_ready": True,
         "tools": [item.name for item in TOOLS],
-        "routes": ["concept", "summary", "plan", "quiz", "review", "followup", "unknown"],
+        "routes": ["concept", "summary", "plan", "quiz", "review", "followup",  "web_search","hybrid","unknown"],
         "chat_history_ready": True,
     }
 
@@ -140,7 +182,14 @@ def chats():
 
 @app.get("/api/chats/{session_id}")
 def chat_messages(session_id: str):
-    return {"session_id": session_id, "messages": safe_get_chat_messages(session_id)}
+    session = get_session(session_id)
+
+    return {
+        "session_id": session_id,
+        "pdf_name": session.pdf_name,
+        "has_pdf": bool(session.pdf_text),
+        "messages": safe_get_chat_messages(session_id),
+    }
 
 
 @app.delete("/api/chats/{session_id}")
@@ -178,12 +227,20 @@ def api_create_chat_session():
 
 @app.get("/api/chat/messages")
 def api_chat_messages(session_id: str = "default"):
-    return {"session_id": session_id, "messages": safe_get_chat_messages(session_id)}
+    session = get_session(session_id)
+
+    return {
+        "session_id": session_id,
+        "pdf_name": session.pdf_name,
+        "has_pdf": bool(session.pdf_text),
+        "messages": safe_get_chat_messages(session_id),
+    }
 
 
 @app.get("/api/pdf/status")
-def pdf_status(session_id: str = "default"):
-    session = get_session(session_id)
+def pdf_status(session_id: str = "default", pdf_name: str | None = None):
+    session = ensure_session_pdf_loaded(session_id, pdf_name)
+
     return {
         "has_pdf": bool(session.pdf_text),
         "pdf_name": session.pdf_name,
@@ -194,16 +251,42 @@ def pdf_status(session_id: str = "default"):
 
 
 @app.get("/api/pdf/page-image")
-def pdf_page_image(session_id: str = "default", page: int = 1):
-    session = get_session(session_id)
-
-    if not session.pdf_path or not session.pdf_path.exists():
-        raise HTTPException(status_code=404, detail="업로드된 PDF가 없습니다.")
+def pdf_page_image(
+    session_id: str = "default",
+    page: int = 1,
+    pdf_name: str | None = None,
+):
     if page < 1:
         raise HTTPException(status_code=400, detail="page는 1 이상이어야 합니다.")
 
+    session = ensure_session_pdf_loaded(session_id, pdf_name)
+
+    pdf_path = session.pdf_path if session.pdf_path and session.pdf_path.exists() else None
+
+    if pdf_path is None and pdf_name:
+        pdf_path = find_pdf_by_original_name(pdf_name)
+
+        if pdf_path:
+            page_docs = read_pdf_documents(pdf_path, Path(pdf_name).name)
+            text = docs_to_text(page_docs)
+
+            if text:
+                session.pdf_path = pdf_path
+                session.pdf_name = Path(pdf_name).name
+                session.page_documents = page_docs
+                session.pdf_text = text
+                build_index(session)
+                persist_session_pdf(session)
+                safe_update_chat_pdf_name(session_id, session.pdf_name)
+
+    if pdf_path is None:
+        raise HTTPException(
+            status_code=404,
+            detail="현재 세션에 연결된 PDF 파일을 찾지 못했습니다.",
+        )
+
     try:
-        with fitz.open(str(session.pdf_path)) as doc:
+        with fitz.open(str(pdf_path)) as doc:
             if page > len(doc):
                 raise HTTPException(status_code=404, detail=f"PDF에 {page}페이지가 없습니다.")
 

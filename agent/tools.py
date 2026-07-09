@@ -1,6 +1,8 @@
 from __future__ import annotations
-
+import os
 import re
+
+from tavily import TavilyClient
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware, ToolRetryMiddleware
@@ -142,7 +144,56 @@ def study_plan_tool(session_id: str, days: int = 3) -> str:
     )
 
 
-TOOLS = [pdf_retriever, pdf_summary_tool, make_quiz_from_pdf, study_plan_tool]
+@tool
+def search_web_with_tavily(query: str, max_results: int = 5) -> str:
+    """최신 정보, 외부 사례, PDF 밖의 보충 설명이 필요할 때 Tavily로 웹을 검색한다."""
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        return "TAVILY_API_KEY가 설정되어 있지 않아 웹 검색을 사용할 수 없습니다."
+
+    client = TavilyClient(api_key=api_key)
+
+    try:
+        result = client.search(
+            query=query,
+            search_depth="basic",
+            max_results=max_results,
+            include_answer=True,
+            include_raw_content=False,
+        )
+    except Exception as exc:
+        return f"Tavily 검색 중 오류가 발생했습니다: {exc}"
+
+    answer = result.get("answer") or ""
+    results = result.get("results") or []
+
+    if not answer and not results:
+        return "Tavily 검색 결과가 없습니다."
+
+    lines = ["[Tavily 웹 검색 결과]"]
+
+    if answer:
+        lines.append(f"\n요약:\n{answer}")
+
+    for idx, item in enumerate(results, start=1):
+        title = item.get("title", "제목 없음")
+        url = item.get("url", "URL 없음")
+        content = item.get("content", "")
+        lines.append(
+            f"\n[{idx}] {title}\n"
+            f"URL: {url}\n"
+            f"내용: {content[:800]}"
+        )
+
+    return "\n".join(lines)
+
+TOOLS = [
+    pdf_retriever,
+    pdf_summary_tool,
+    make_quiz_from_pdf,
+    study_plan_tool,
+    search_web_with_tavily,
+]
 
 
 def build_tool_agent():
@@ -150,13 +201,16 @@ def build_tool_agent():
         model=init_chat_model(f"openai:{MODEL_NAME}", temperature=0.2),
         tools=TOOLS,
         system_prompt=(
-            "너는 CS 전공 학습 도우미 StudyMate다. "
-            "사용자가 버튼으로 기능을 고르는 것이 아니라 자연어로 요청하면, "
-            "의도에 맞는 Tool을 스스로 선택해 실행해야 한다. "
-            "반드시 업로드된 PDF 근거를 먼저 사용하고, 한국어로 답한다. "
-            "원문을 길게 복사하지 말고 시험 공부에 바로 쓰기 좋게 재구성한다. "
-            "답변 마지막에는 사용한 Tool과 참고한 PDF 페이지를 간단히 언급한다."
-        ),
+    "너는 CS 전공 학습 도우미 StudyMate다. "
+    "사용자가 버튼으로 기능을 고르는 것이 아니라 자연어로 요청하면, "
+    "의도에 맞는 Tool을 스스로 선택해 실행해야 한다. "
+    "PDF 관련 질문은 반드시 업로드된 PDF 근거를 먼저 사용한다. "
+    "다만 사용자가 최신 정보, 현재 기준, 실제 사례, 외부 자료, 웹 검색을 요구하거나 "
+    "PDF 근거만으로 부족하면 search_web_with_tavily Tool을 추가로 사용한다. "
+    "PDF 내용과 웹 검색 결과가 충돌하면 PDF 기반 시험 설명과 외부 최신 정보를 구분해서 설명한다. "
+    "한국어로 답하고, 원문을 길게 복사하지 말고 시험 공부에 바로 쓰기 좋게 재구성한다. "
+    "답변 마지막에는 사용한 Tool, 참고한 PDF 페이지, 웹 검색 출처를 간단히 언급한다."
+),
         middleware=[
             ToolRetryMiddleware(
                 max_retries=2,

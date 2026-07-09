@@ -71,6 +71,15 @@ def keyword_route(message: str) -> str:
         ]
     ):
         return "followup"
+
+    web_words = ["최신", "현재", "요즘", "최근", "웹", "인터넷", "외부", "사례", "찾아줘", "검색"]
+    pdf_words = ["pdf", "자료", "문서", "업로드", "강의자료"]
+
+    if any(word in text for word in web_words):
+        if any(word in text for word in pdf_words):
+            return "hybrid"
+        return "web_search"
+
     if any(word in text for word in ["채점", "오답", "복습", "틀린", "맞아?", "맞나요"]):
         return "review"
     if any(word in text for word in ["요약", "정리"]):
@@ -120,16 +129,16 @@ def router_node(state: State) -> dict:
 
     trace = trace + [f"router_node: route={route}", f"router_node: reason={reason}"]
 
-    if route != "unknown" and not session.pdf_text:
-        return {
-            "route": "no_pdf",
-            "trace": trace + ["router_node: PDF 없음 → no_pdf로 전환"],
-            "final_response": {
-                "type": "no_pdf",
-                "summary": "현재 업로드된 PDF가 없습니다. 먼저 PDF를 업로드한 뒤 질문해주세요.",
-            },
-            "quality_next": "finish",
-        }
+    if route not in ["unknown", "web_search"] and not session.pdf_text:
+      return {
+        "route": "no_pdf",
+        "trace": trace + ["router_node: PDF 없음 → no_pdf로 전환"],
+        "final_response": {
+            "type": "no_pdf",
+            "summary": "현재 업로드된 PDF가 없습니다. 먼저 PDF를 업로드한 뒤 질문해주세요.",
+        },
+        "quality_next": "finish",
+    }
 
     return {
         "route": route,
@@ -190,14 +199,23 @@ def run_tool_agent_node(state: State) -> dict:
 
     agent = build_tool_agent()
     context = SystemMessage(
-        content=(
-            f"현재 session_id: {session.session_id}\n"
-            f"현재 PDF 이름: {session.pdf_name}\n"
-            "Tool 호출 시 session_id 인자에는 반드시 위 session_id를 그대로 넣어라.\n"
-            f"현재 route는 {route}이다.\n"
-            "사용자 요청을 보고 필요한 Tool을 스스로 선택해 실행하라."
-        )
+    content=(
+        f"현재 session_id: {session.session_id}\n"
+        f"현재 PDF 이름: {session.pdf_name}\n"
+        "Tool 호출 시 session_id 인자에는 반드시 위 session_id를 그대로 넣어라.\n"
+        f"현재 route는 {route}이다.\n"
+        "사용자 요청을 보고 필요한 Tool을 스스로 선택해 실행하라.\n"
+        "\n"
+        "Tool 선택 규칙:\n"
+        "- PDF 내용 검색/개념 설명이 필요하면 pdf_retriever를 사용한다.\n"
+        "- PDF 전체 요약이면 pdf_summary_tool을 사용한다.\n"
+        "- 예상문제/퀴즈 요청이면 make_quiz_from_pdf를 사용한다.\n"
+        "- 공부 계획 요청이면 study_plan_tool을 사용한다.\n"
+        "- 최신 정보, 현재 기준, 실제 사례, 외부 자료, 웹 검색 요청이면 search_web_with_tavily를 사용한다.\n"
+        "- route가 hybrid이면 pdf_retriever와 search_web_with_tavily를 모두 사용하는 것을 우선한다.\n"
+        "- route가 web_search이면 search_web_with_tavily를 우선 사용한다."
     )
+)
 
     try:
         result = agent.invoke({"messages": [context, state["messages"][-1]]})
@@ -449,15 +467,17 @@ def build_graph():
         "router",
         route_selector,
         {
-            "concept": "concept_node",
-            "summary": "summary_node",
-            "plan": "tool_agent_node",
-            "quiz": "tool_agent_node",
-            "review": "review_node",
-            "followup": "followup_node",
-            "no_pdf": "no_pdf_node",
-            "unknown": "unknown_node",
-        },
+    "concept": "concept_node",
+    "summary": "summary_node",
+    "plan": "tool_agent_node",
+    "quiz": "tool_agent_node",
+    "web_search": "tool_agent_node",
+    "hybrid": "tool_agent_node",
+    "review": "review_node",
+    "followup": "followup_node",
+    "no_pdf": "no_pdf_node",
+    "unknown": "unknown_node",
+},
     )
 
     for node_name in (
