@@ -22,6 +22,7 @@ from agent.tools import (
 )
 from services.pdf_store import retrieve_pdf_chunks
 from services.session_store import MODEL_NAME, OPENAI_READY, get_session
+from services.quiz_store import get_current_question, reset_quiz
 
 
 class State(TypedDict, total=False):
@@ -53,6 +54,12 @@ def format_review_feedback(feedback: ReviewFeedback, evidence: list[str]) -> str
 
 def keyword_route(message: str) -> str:
     text = message.lower()
+
+    if any(word in text for word in ["퀴즈 그만", "문제 그만", "퀴즈 종료", "문제 종료", "그만 풀"]):
+        return "quiz_stop"
+
+    if looks_like_quiz_answer(text):
+        return "quiz_answer"
 
     if any(
         word in text
@@ -89,6 +96,45 @@ def keyword_route(message: str) -> str:
     if any(word in text for word in ["문제", "퀴즈", "예상"]):
         return "quiz"
     return "concept"
+
+
+def looks_like_quiz_answer(message: str) -> bool:
+    text = message.strip().lower()
+    if not text:
+        return False
+
+    feature_words = [
+        "계획",
+        "일정",
+        "플랜",
+        "요약",
+        "정리",
+        "설명",
+        "알려줘",
+        "보여줘",
+        "오답",
+        "복습",
+        "문제 내",
+        "퀴즈",
+        "예상문제",
+    ]
+    if any(word in text for word in feature_words):
+        return False
+
+    if text in {"o", "x", "○", "×", "맞음", "틀림", "true", "false"}:
+        return True
+
+    normalized = text.replace(" ", "")
+    if normalized in {"a", "b", "c", "d", "e", "1", "2", "3", "4", "5"}:
+        return True
+
+    if any(marker in text for marker in ["정답은", "답은", "내 답", "답:"]):
+        return True
+
+    if len(text) <= 20 and not text.endswith(("?", "？")):
+        return True
+
+    return False
 
 
 def router_node(state: State) -> dict:
@@ -128,6 +174,41 @@ def router_node(state: State) -> dict:
         reason = "OPENAI_API_KEY 없음 → 키워드 fallback 라우팅"
 
     trace = trace + [f"router_node: route={route}", f"router_node: reason={reason}"]
+
+    if route == "quiz_answer":
+        if get_current_question(state["session_id"]) is None:
+            route = "unknown"
+            trace = trace + ["router_node: quiz_answer 감지됐지만 진행 중인 퀴즈 없음 → unknown"]
+        else:
+            return {
+                "route": "quiz_answer",
+                "trace": trace,
+                "final_response": {
+                    "type": "quiz_answer",
+                    "summary": "퀴즈 답안은 현재 퀴즈 답안 처리 흐름에서 채점됩니다.",
+                },
+                "quality_next": "finish",
+            }
+
+    if route == "quiz_stop":
+        reset_quiz(state["session_id"])
+        return {
+            "route": "quiz_stop",
+            "trace": trace + ["router_node: 퀴즈 상태 초기화"],
+            "final_response": {
+                "type": "quiz_stop",
+                "summary": "진행 중인 퀴즈를 종료했습니다. 이제 다른 기능을 요청할 수 있습니다.",
+            },
+            "used_tools": ["quiz_store"],
+            "evidence": [],
+            "quality_next": "finish",
+        }
+
+    if route in ["concept", "summary", "plan", "review", "followup", "web_search", "hybrid", "quiz"]:
+        current_question = get_current_question(state["session_id"])
+        if current_question is not None and route != "quiz":
+            reset_quiz(state["session_id"])
+            trace = trace + [f"router_node: 명확한 {route} 요청 우선 → 진행 중인 퀴즈 종료"]
 
     if route not in ["unknown", "web_search"] and not session.pdf_text:
       return {
@@ -438,6 +519,19 @@ def unknown_node(state: State) -> dict:
     }
 
 
+def passthrough_response_node(state: State) -> dict:
+    response = state.get("final_response") or {
+        "type": state.get("route", "unknown"),
+        "summary": "요청을 처리했습니다.",
+    }
+    return {
+        "final_response": response,
+        "trace": state.get("trace", []),
+        "used_tools": state.get("used_tools", []),
+        "evidence": state.get("evidence", []),
+    }
+
+
 def finalize_response_node(state: State) -> dict:
     response = state.get("final_response") or {
         "type": "error",
@@ -459,6 +553,7 @@ def build_graph():
     builder.add_node("quality_check_node", quality_check_node)
     builder.add_node("no_pdf_node", no_pdf_node)
     builder.add_node("unknown_node", unknown_node)
+    builder.add_node("passthrough_response_node", passthrough_response_node)
     builder.add_node("finalize_response", finalize_response_node)
 
     builder.add_edge(START, "router")
@@ -475,6 +570,8 @@ def build_graph():
     "hybrid": "tool_agent_node",
     "review": "review_node",
     "followup": "followup_node",
+    "quiz_answer": "passthrough_response_node",
+    "quiz_stop": "passthrough_response_node",
     "no_pdf": "no_pdf_node",
     "unknown": "unknown_node",
 },
@@ -500,6 +597,7 @@ def build_graph():
 
     builder.add_edge("no_pdf_node", "finalize_response")
     builder.add_edge("unknown_node", "finalize_response")
+    builder.add_edge("passthrough_response_node", "finalize_response")
     builder.add_edge("finalize_response", END)
 
     return builder.compile(checkpointer=MemorySaver())

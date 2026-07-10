@@ -15,6 +15,8 @@ class RouteDecision(BaseModel):
         "followup",
         "web_search",
         "hybrid",
+        "quiz_answer",
+        "quiz_stop",
         "unknown",
     ] = Field(
         description=(
@@ -26,6 +28,8 @@ class RouteDecision(BaseModel):
             "followup=직전 답변을 이어서 더 묻는 요청, "
             "web_search=PDF 밖의 최신 정보/외부 사례/웹 검색 요청, "
             "hybrid=PDF 근거와 외부 웹 검색이 모두 필요한 요청, "
+            "quiz_answer=진행 중인 퀴즈의 실제 답안 제출, "
+            "quiz_stop=진행 중인 퀴즈 종료 요청, "
             "unknown=PDF/공부와 무관한 요청"
         )
     )

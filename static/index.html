@@ -394,6 +394,70 @@
         );
       }
 
+      function isQuizStopMessage(message) {
+        const text = String(message || "").toLowerCase();
+
+        return (
+          text.includes("퀴즈 그만") ||
+          text.includes("문제 그만") ||
+          text.includes("퀴즈 종료") ||
+          text.includes("문제 종료") ||
+          text.includes("그만 풀")
+        );
+      }
+
+      function isExplicitFeatureRequest(message) {
+        const text = String(message || "").toLowerCase();
+
+        return (
+          text.includes("계획") ||
+          text.includes("일정") ||
+          text.includes("플랜") ||
+          text.includes("요약") ||
+          text.includes("정리") ||
+          text.includes("설명") ||
+          text.includes("알려줘") ||
+          text.includes("오답") ||
+          text.includes("복습") ||
+          text.includes("보여줘") ||
+          isQuizStartMessage(message)
+        );
+      }
+
+      function looksLikeQuizAnswer(message) {
+        const text = String(message || "").trim().toLowerCase();
+        if (!text) return false;
+
+        if (isQuizStopMessage(text) || isExplicitFeatureRequest(text)) {
+          return false;
+        }
+
+        const compact = text.replace(/\s+/g, "");
+
+        if (
+          ["a", "b", "c", "d", "e", "1", "2", "3", "4", "5"].includes(
+            compact,
+          )
+        ) {
+          return true;
+        }
+
+        if (["o", "x", "○", "×", "맞음", "틀림"].includes(compact)) {
+          return true;
+        }
+
+        if (
+          text.includes("정답은") ||
+          text.includes("답은") ||
+          text.includes("내 답") ||
+          text.includes("답:")
+        ) {
+          return true;
+        }
+
+        return text.length <= 20 && !text.endsWith("?") && !text.endsWith("？");
+      }
+
       function extractQuizCount(message) {
         const match = String(message || "").match(/(\d+)\s*개/);
 
@@ -1103,6 +1167,36 @@
         setActiveChatItem(sessionId);
       }
 
+      async function stopQuizFromMessage(message) {
+        const data = await fetchJson("/api/quiz/stop", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            answer: message,
+          }),
+        });
+
+        quizActive = false;
+
+        addMessage("ai", data.answer, {
+          extra: {
+            route: data.route,
+            used_tools: data.used_tools || [],
+            evidence: data.evidence || [],
+            trace: data.trace || [],
+          },
+        });
+
+        updateAgentPanel(data);
+        renderWrongAnswers(data.wrong_answers || []);
+        await refreshPdfStatus();
+        await loadChatSessions();
+        setActiveChatItem(sessionId);
+      }
+
       async function sendMessage() {
         const message = messageInput.value.trim();
         if (!message) return;
@@ -1118,9 +1212,18 @@
         sendBtn.disabled = true;
 
         try {
-          if (quizActive) {
+          if (quizActive && isQuizStopMessage(message)) {
+            await stopQuizFromMessage(message);
+            return;
+          }
+
+          if (quizActive && looksLikeQuizAnswer(message)) {
             await submitQuizAnswer(message);
             return;
+          }
+
+          if (quizActive) {
+            quizActive = false;
           }
 
           if (isQuizStartMessage(message)) {

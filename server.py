@@ -335,6 +335,7 @@ def health():
             "summary",
             "plan",
             "quiz",
+            "quiz_stop",
             "review",
             "followup",
             "web_search",
@@ -708,6 +709,46 @@ def quiz_answer(req: QuizAnswerRequest):
     }
 
 
+@app.post("/api/quiz/stop")
+def quiz_stop(req: QuizAnswerRequest):
+    session = get_session(req.session_id)
+    reset_quiz(req.session_id)
+
+    answer = "진행 중인 퀴즈를 종료했습니다. 이제 다른 기능을 요청할 수 있습니다."
+
+    safe_save_chat_message(
+        session_id=req.session_id,
+        role="user",
+        content=req.answer,
+        pdf_name=session.pdf_name,
+    )
+
+    safe_save_chat_message(
+        session_id=req.session_id,
+        role="assistant",
+        content=answer,
+        route="quiz_stop",
+        pdf_name=session.pdf_name,
+        used_tools=["quiz_store"],
+        evidence=[],
+    )
+
+    return {
+        "ok": True,
+        "session_id": req.session_id,
+        "answer": answer,
+        "route": "quiz_stop",
+        "used_tools": ["quiz_store"],
+        "evidence": [],
+        "trace": [
+            "quiz_stop: 사용자 퀴즈 종료 요청 수신",
+            "quiz_stop: 현재 세션 퀴즈 상태 초기화",
+        ],
+        "finished": True,
+        "wrong_answers": list_wrong_answers(req.session_id),
+    }
+
+
 @app.get("/api/quiz/wrongs")
 def quiz_wrongs(session_id: str = "default"):
     return {
@@ -774,6 +815,28 @@ def chat(req: ChatRequest):
     used_tools = result.get("used_tools", [])
     evidence = result.get("evidence", [])
     trace = result.get("trace", [])
+
+    if route == "quiz_answer":
+        quiz_result = submit_answer(req.session_id, req.message)
+
+        if quiz_result.get("ok"):
+            answer = format_quiz_feedback(quiz_result)
+            evidence = (
+                [f"page {quiz_result.get('page')} - {quiz_result.get('pdf_name')}"]
+                if quiz_result.get("page")
+                else []
+            )
+            used_tools = ["quiz_store", "answer_checker"]
+            trace = trace + [
+                "chat: quiz_answer route 감지",
+                "chat: 현재 문제 정답과 사용자 답안 비교",
+                "chat: 오답이면 오답 목록에 저장",
+            ]
+        else:
+            answer = quiz_result.get("message", "진행 중인 퀴즈가 없습니다.")
+            evidence = []
+            used_tools = ["quiz_store"]
+            trace = trace + ["chat: quiz_answer route 감지됐지만 진행 중인 퀴즈 없음"]
 
     safe_save_chat_message(
         session_id=req.session_id,
