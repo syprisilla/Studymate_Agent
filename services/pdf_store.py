@@ -179,6 +179,59 @@ def remove_session_pdf_meta(session_id: str) -> None:
         save_session_pdf_meta(payload)
 
 
+def remove_session_pdf_file(session_id: str) -> None:
+    payload = load_session_pdf_meta()
+    meta = payload.get(session_id)
+
+    if not isinstance(meta, dict):
+        return
+
+    pdf_file = meta.get("pdf_file")
+    if not pdf_file:
+        return
+
+    is_used_elsewhere = any(
+        other_session_id != session_id
+        and isinstance(other_meta, dict)
+        and other_meta.get("pdf_file") == pdf_file
+        for other_session_id, other_meta in payload.items()
+    )
+
+    if is_used_elsewhere:
+        logger.info(
+            "kept_shared_pdf_file session_id=%s pdf_file=%s",
+            session_id,
+            pdf_file,
+        )
+        return
+
+    pdf_path = PDF_DIR / Path(pdf_file).name
+    pdf_root = PDF_DIR.resolve()
+
+    try:
+        resolved_path = pdf_path.resolve()
+    except FileNotFoundError:
+        return
+
+    if pdf_root != resolved_path.parent:
+        logger.warning(
+            "refused_to_delete_pdf_outside_root session_id=%s path=%s",
+            session_id,
+            resolved_path,
+        )
+        return
+
+    if resolved_path.exists() and resolved_path.is_file():
+        try:
+            resolved_path.unlink()
+        except Exception:
+            logger.exception(
+                "failed_to_delete_pdf_file session_id=%s path=%s",
+                session_id,
+                resolved_path,
+            )
+
+
 def restore_session_pdf(session: StudySession) -> bool:
     if session.pdf_text:
         return True

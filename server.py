@@ -41,6 +41,7 @@ from services.pdf_store import (
     enrich_sessions_with_pdf_meta,
     persist_session_pdf,
     read_pdf_documents,
+    remove_session_pdf_file,
     remove_session_pdf_meta,
     remove_session_vectorstore,
     retrieve_pdf_chunks,
@@ -386,6 +387,7 @@ def delete_chat(session_id: str):
 
     reset_quiz(session_id)
     delete_quiz_history(session_id)
+    remove_session_pdf_file(session_id)
     remove_session_pdf_meta(session_id)
     remove_session_vectorstore(session_id)
 

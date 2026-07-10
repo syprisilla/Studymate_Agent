@@ -195,6 +195,12 @@
         return loadLocalSessions().find((session) => session.session_id === id);
       }
 
+      function removeLocalSession(id) {
+        saveLocalSessions(
+          loadLocalSessions().filter((session) => session.session_id !== id),
+        );
+      }
+
       function upsertLocalSession(id, patch = {}) {
         const sessions = loadLocalSessions();
         const index = sessions.findIndex(
@@ -663,23 +669,62 @@
         );
 
         if (activeItem) {
-          activeItem.textContent = makeChatTitle(title);
+          const titleEl = activeItem.querySelector(".chat-item-title");
+          if (titleEl) {
+            titleEl.textContent = makeChatTitle(title);
+          }
         }
 
         updateLocalSessionTitle(title);
       }
 
-      function createLocalChatItem(id, title = "새 대화") {
-        const item = document.createElement("button");
-        item.type = "button";
+      function createChatListItem(id, title = "새 대화") {
+        const item = document.createElement("div");
         item.className = "chat-item";
         item.dataset.sessionId = id;
-        item.textContent = makeChatTitle(title);
+        item.tabIndex = 0;
+        item.setAttribute("role", "button");
+
+        const titleEl = document.createElement("span");
+        titleEl.className = "chat-item-title";
+        titleEl.textContent = makeChatTitle(title);
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "chat-delete-btn";
+        deleteBtn.setAttribute("aria-label", "대화 삭제");
+        deleteBtn.textContent = "×";
+
+        item.appendChild(titleEl);
+        item.appendChild(deleteBtn);
 
         item.addEventListener("click", () => {
           loadChatSession(id);
         });
 
+        item.addEventListener("keydown", (event) => {
+          if (event.target !== item) return;
+
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            loadChatSession(id);
+          }
+        });
+
+        deleteBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          deleteChatSession(id);
+        });
+
+        deleteBtn.addEventListener("keydown", (event) => {
+          event.stopPropagation();
+        });
+
+        return item;
+      }
+
+      function createLocalChatItem(id, title = "새 대화") {
+        const item = createChatListItem(id, title);
         chatList.prepend(item);
         setActiveChatItem(id);
       }
@@ -697,22 +742,45 @@
         }
 
         sessions.forEach((chat) => {
-          const item = document.createElement("button");
-          item.type = "button";
-          item.className = "chat-item";
-          item.dataset.sessionId = chat.session_id;
-          item.textContent = makeChatTitle(
+          const item = createChatListItem(
+            chat.session_id,
             chat.title || chat.pdf_name || "새 대화",
           );
-
-          item.addEventListener("click", () => {
-            loadChatSession(chat.session_id);
-          });
 
           chatList.appendChild(item);
         });
 
         setActiveChatItem(sessionId);
+      }
+
+      async function deleteChatSession(id) {
+        if (!confirm("이 대화를 삭제하시겠습니까?")) return;
+
+        try {
+          await fetchJson(`/api/chats/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
+        } catch (err) {
+          alert("대화를 삭제하지 못했습니다. 잠시 후 다시 시도해주세요.");
+          return;
+        }
+
+        removeLocalSession(id);
+
+        if (id !== sessionId) {
+          await loadChatSessions();
+          return;
+        }
+
+        localStorage.removeItem(ACTIVE_SESSION_KEY);
+        await loadChatSessions();
+
+        const nextItem = chatList.querySelector(".chat-item");
+        if (nextItem?.dataset.sessionId) {
+          await loadChatSession(nextItem.dataset.sessionId);
+        } else {
+          await startNewChat();
+        }
       }
 
       async function loadChatSessions() {
