@@ -42,9 +42,11 @@ from services.pdf_store import (
     persist_session_pdf,
     read_pdf_documents,
     remove_session_pdf_meta,
+    remove_session_vectorstore,
     retrieve_pdf_chunks,
 )
 from services.quiz_store import (
+    delete_quiz_history,
     get_current_question,
     get_wrong_answer,
     list_wrong_answers,
@@ -52,6 +54,7 @@ from services.quiz_store import (
     start_quiz,
     submit_answer,
 )
+from services.database import initialize_database
 from services.session_store import (
     MODEL_NAME,
     OPENAI_READY,
@@ -70,6 +73,11 @@ logging.basicConfig(
 
 app = FastAPI(title="StudyMate Agent")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    initialize_database()
 
 
 @app.middleware("http")
@@ -377,7 +385,9 @@ def delete_chat(session_id: str):
         del SESSIONS[session_id]
 
     reset_quiz(session_id)
+    delete_quiz_history(session_id)
     remove_session_pdf_meta(session_id)
+    remove_session_vectorstore(session_id)
 
     return {"ok": True, "session_id": session_id}
 
@@ -515,6 +525,7 @@ def upload_pdf(file: UploadFile = File(...), session_id: str = Form("default")):
         )
 
     session = get_session(session_id)
+    remove_session_vectorstore(session_id)
     session.pdf_path = path
     session.pdf_name = file.filename
     session.page_documents = page_docs

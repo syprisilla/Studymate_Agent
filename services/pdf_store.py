@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -10,12 +12,17 @@ from langchain_openai import OpenAIEmbeddings
 from pypdf import PdfReader
 
 from services.session_store import (
+    DATA_DIR,
     OPENAI_READY,
     PDF_DIR,
     SESSION_PDF_META_PATH,
     StudySession,
     get_session,
 )
+
+
+logger = logging.getLogger("studymate.pdf_store")
+VECTORSTORE_DIR = DATA_DIR / "vectorstores"
 
 
 def read_pdf_documents(path: Path, filename: str) -> list[Document]:
@@ -63,9 +70,62 @@ def chunk_documents(docs: list[Document]) -> list[Document]:
     return chunks
 
 
+def get_vectorstore_path(session_id: str) -> Path:
+    return VECTORSTORE_DIR / session_id
+
+
+def remove_session_vectorstore(session_id: str) -> None:
+    index_path = get_vectorstore_path(session_id)
+    vectorstore_root = VECTORSTORE_DIR.resolve()
+
+    try:
+        resolved_path = index_path.resolve()
+    except FileNotFoundError:
+        return
+
+    if vectorstore_root != resolved_path and vectorstore_root not in resolved_path.parents:
+        logger.warning(
+            "refused_to_delete_vectorstore_outside_root session_id=%s path=%s",
+            session_id,
+            resolved_path,
+        )
+        return
+
+    if resolved_path.exists():
+        shutil.rmtree(resolved_path)
+
+
+def load_saved_index(session: StudySession) -> bool:
+    if not OPENAI_READY:
+        return False
+
+    index_path = get_vectorstore_path(session.session_id)
+    if not index_path.exists():
+        return False
+
+    try:
+        session.vectorstore = FAISS.load_local(
+            str(index_path),
+            OpenAIEmbeddings(model="text-embedding-3-small"),
+            allow_dangerous_deserialization=True,
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "failed_to_load_vectorstore session_id=%s path=%s",
+            session.session_id,
+            index_path,
+        )
+        session.vectorstore = None
+        return False
+
+
 def build_index(session: StudySession) -> None:
     if not session.page_documents or not OPENAI_READY:
         session.vectorstore = None
+        return
+
+    if load_saved_index(session):
         return
 
     try:
@@ -73,7 +133,11 @@ def build_index(session: StudySession) -> None:
             chunk_documents(session.page_documents),
             OpenAIEmbeddings(model="text-embedding-3-small"),
         )
+        index_path = get_vectorstore_path(session.session_id)
+        index_path.mkdir(parents=True, exist_ok=True)
+        session.vectorstore.save_local(str(index_path))
     except Exception:
+        logger.exception("failed_to_build_vectorstore session_id=%s", session.session_id)
         session.vectorstore = None
 
 

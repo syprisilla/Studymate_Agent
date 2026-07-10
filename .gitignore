@@ -51,9 +51,11 @@ Thumbs.db
 # 업로드된 PDF 원본은 GitHub에 올리지 않기
 data/pdfs/
 data/index/
+data/vectorstores/
 
 # 채팅 기록은 개인정보/테스트 데이터라 보통 제외
 data/chat_history.json
+data/session_pdfs.json
 chat_history.json
 
 # 임시 다운로드/수정 파일
